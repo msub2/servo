@@ -131,6 +131,26 @@ dictionary Pbkdf2Params : Algorithm {
   required HashAlgorithmIdentifier hash;
 };
 
+// Elliptic Curve Shared
+typedef DOMString NamedCurve;
+
+dictionary EcKeyGenParams : Algorithm {
+  required NamedCurve namedCurve;
+};
+
+dictionary EcKeyAlgorithm : KeyAlgorithm {
+  required NamedCurve namedCurve;
+};
+
+dictionary EcKeyImportParams : Algorithm {
+  required NamedCurve namedCurve;
+};
+
+// https://w3c.github.io/webcrypto/#dh-EcdhKeyDeriveParams
+dictionary EcdhKeyDeriveParams : Algorithm {
+  required CryptoKey public;
+};
+
 // JWK
 dictionary RsaOtherPrimesInfo {
   // The following fields are defined in Section 6.3.2.7 of JSON Web Algorithms

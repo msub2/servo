@@ -15,3 +15,8 @@ interface CryptoKey {
   readonly attribute object algorithm;
   readonly attribute object usages;
 };
+
+dictionary CryptoKeyPair {
+  CryptoKey publicKey;
+  CryptoKey privateKey;
+};

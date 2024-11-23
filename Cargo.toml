@@ -92,6 +92,9 @@ net_traits = { path = "components/shared/net" }
 nix = "0.29"
 num-traits = "0.2"
 num_cpus = "1.1.0"
+p256 = { version = "0.13.2", features = ["alloc", "arithmetic", "ecdsa", "ecdh"] }
+p384 = { version = "0.13.0", features = ["alloc", "arithmetic", "ecdsa", "ecdh"] }
+p521 = { version = "0.13.3", features = ["alloc", "arithmetic", "ecdsa", "ecdh"] }
 parking_lot = "0.12"
 percent-encoding = "2.3"
 proc-macro2 = "1"

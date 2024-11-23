@@ -86,6 +86,9 @@ mime_guess = { workspace = true }
 net_traits = { workspace = true }
 num_cpus = { workspace = true }
 num-traits = { workspace = true }
+p256 = { workspace = true }
+p384 = { workspace = true }
+p521 = { workspace = true }
 parking_lot = { workspace = true }
 percent-encoding = { workspace = true }
 phf = "0.11"
