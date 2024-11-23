@@ -13,13 +13,16 @@ use aes::{Aes128, Aes192, Aes256};
 use aes_gcm::{AeadInPlace, AesGcm, KeyInit};
 use aes_kw::{KekAes128, KekAes192, KekAes256};
 use base64::prelude::*;
-use cipher::consts::{U12, U16, U32};
+use cipher::consts::{U12, U16, U32, U48, U66};
 use dom_struct::dom_struct;
 use js::conversions::ConversionResult;
 use js::jsapi::{JSObject, JS_NewObject};
 use js::jsval::ObjectValue;
 use js::rust::MutableHandleObject;
 use js::typedarray::ArrayBufferU8;
+use p256::{elliptic_curve, NistP256};
+use p384::NistP384;
+use p521::NistP521;
 use ring::{digest, hkdf, hmac, pbkdf2};
 use serde_json;
 use servo_rand::{RngCore, ServoRng};
@@ -27,12 +30,13 @@ use servo_rand::{RngCore, ServoRng};
 use crate::dom::bindings::buffer_source::create_buffer_source;
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::CryptoKeyBinding::{
-    CryptoKeyMethods, KeyType, KeyUsage,
+    CryptoKeyMethods, CryptoKeyPair, KeyType, KeyUsage,
 };
 use crate::dom::bindings::codegen::Bindings::SubtleCryptoBinding::{
     AesCbcParams, AesCtrParams, AesDerivedKeyParams, AesGcmParams, AesKeyAlgorithm,
-    AesKeyGenParams, Algorithm, AlgorithmIdentifier, HkdfParams, HmacImportParams,
-    HmacKeyAlgorithm, HmacKeyGenParams, JsonWebKey, KeyAlgorithm, KeyFormat, Pbkdf2Params,
+    AesKeyGenParams, Algorithm, AlgorithmIdentifier, EcKeyAlgorithm, EcKeyGenParams,
+    EcKeyImportParams, EcdhKeyDeriveParams, HkdfParams, HmacImportParams, HmacKeyAlgorithm,
+    HmacKeyGenParams, JsonWebKey, KeyAlgorithm, KeyFormat, NamedCurve, Pbkdf2Params,
     SubtleCryptoMethods,
 };
 use crate::dom::bindings::codegen::UnionTypes::{
@@ -537,11 +541,29 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
             task!(generate_key: move || {
                 let subtle = this.root();
                 let promise = trusted_promise.root();
-                let key = normalized_algorithm.generate_key(&subtle, key_usages, extractable);
 
-                match key {
-                    Ok(key) => promise.resolve_native(&key),
-                    Err(e) => promise.reject_error(e),
+                match normalized_algorithm {
+                    KeyGenerationAlgorithm::Ecdh(_) => {
+                        let keypair = normalized_algorithm.generate_keypair(&subtle, key_usages, extractable);
+                        match keypair {
+                            Ok(keypair) => promise.resolve_native(&keypair),
+                            Err(e) => promise.reject_error(e),
+                        }
+                    },
+                    KeyGenerationAlgorithm::Aes(_) => {
+                        let key = normalized_algorithm.generate_key(&subtle, key_usages, extractable);
+                        match key {
+                            Ok(key) => promise.resolve_native(&key),
+                            Err(e) => promise.reject_error(e),
+                        }
+                    },
+                    KeyGenerationAlgorithm::Hmac(_) => {
+                        let key = normalized_algorithm.generate_key(&subtle, key_usages, extractable);
+                        match key {
+                            Ok(key) => promise.resolve_native(&key),
+                            Err(e) => promise.reject_error(e),
+                        }
+                    },
                 }
             }),
             &canceller,
@@ -1129,6 +1151,33 @@ impl From<DOMString> for SubtleAlgorithm {
 }
 
 #[derive(Clone, Debug)]
+pub struct SubtleEcKeyGenParams {
+    pub name: String,
+    pub named_curve: String,
+}
+
+impl From<EcKeyGenParams> for SubtleEcKeyGenParams {
+    fn from(params: EcKeyGenParams) -> Self {
+        SubtleEcKeyGenParams {
+            name: params.parent.name.to_string().to_uppercase(),
+            named_curve: params.namedCurve.to_string().to_uppercase(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SubtleEcdhKeyDeriveParams {
+    pub name: String,
+    pub named_curve: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubtleEcKeyImportParams {
+    pub name: String,
+    pub named_curve: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct SubtleAesCbcParams {
     #[allow(dead_code)]
     pub name: String,
@@ -1381,6 +1430,7 @@ enum ImportKeyAlgorithm {
 ///
 /// [`normalize_algorithm`]: https://w3c.github.io/webcrypto/#algorithm-normalization-normalize-an-algorithm
 enum DeriveBitsAlgorithm {
+    Ecdh(SubtleEcdhKeyDeriveParams),
     Pbkdf2(SubtlePbkdf2Params),
     Hkdf(SubtleHkdfParams),
 }
@@ -1406,6 +1456,7 @@ enum SignatureAlgorithm {
 ///
 /// [`normalize_algorithm`]: https://w3c.github.io/webcrypto/#algorithm-normalization-normalize-an-algorithm
 enum KeyGenerationAlgorithm {
+    Ecdh(SubtleEcKeyGenParams),
     Aes(SubtleAesKeyGenParams),
     Hmac(SubtleHmacKeyGenParams),
 }
@@ -1633,6 +1684,9 @@ fn normalize_algorithm_for_generate_key(
         let params = value_from_js_object!(HmacKeyGenParams, cx, value);
         let subtle_params = SubtleHmacKeyGenParams::new(cx, params)?;
         KeyGenerationAlgorithm::Hmac(subtle_params)
+    } else if name.eq_ignore_ascii_case(ALG_ECDH) {
+        let params = value_from_js_object!(EcKeyGenParams, cx, value);
+        KeyGenerationAlgorithm::Ecdh(params.into())
     } else {
         return Err(Error::NotSupported);
     };
@@ -2047,6 +2101,116 @@ impl SubtleCrypto {
             .expect("failed to create buffer source for decrypted plaintext");
 
         Ok(plaintext)
+    }
+
+    #[allow(unsafe_code)]
+    fn generate_keypair_ecdh(
+        &self,
+        usages: Vec<KeyUsage>,
+        key_gen_params: &SubtleEcKeyGenParams,
+        extractable: bool,
+    ) -> Result<CryptoKeyPair, Error> {
+        if usages
+            .iter()
+            .any(|usage| !matches!(usage, KeyUsage::DeriveBits | KeyUsage::DeriveKey))
+        {
+            return Err(Error::Syntax);
+        }
+
+        let curve = key_gen_params.named_curve.as_str();
+        let (public_handle, secret_handle) = match curve {
+            NAMED_CURVE_P256 | NAMED_CURVE_P384 | NAMED_CURVE_P521 if usages.is_empty() => {
+                return Err(Error::Syntax);
+            },
+            NAMED_CURVE_P256 => {
+                let mut rand = vec![0; 32];
+                self.rng.borrow_mut().fill_bytes(&mut rand);
+                let secret_handle = Handle::EllipticCurveSecret(rand.clone());
+                let array = GenericArray::<u8, U32>::from_slice(&rand);
+                let secret = elliptic_curve::SecretKey::<NistP256>::from_bytes(&array)
+                    .map_err(|_| {
+                        println!("Errored in the P256 block");
+                        Error::Operation
+                    })?;
+                let public = secret.public_key();
+                let public_bytes = public.to_sec1_bytes();
+                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
+                (public_handle, secret_handle)
+            },
+            NAMED_CURVE_P384 => {
+                let mut rand = vec![0; 48];
+                self.rng.borrow_mut().fill_bytes(&mut rand);
+                let secret_handle = Handle::EllipticCurveSecret(rand.clone());
+                let array = GenericArray::<u8, U48>::from_slice(&rand);
+                let secret = elliptic_curve::SecretKey::<NistP384>::from_bytes(&array)
+                    .map_err(|_| {
+                        println!("Errored in the P384 block");
+                        Error::Operation
+                    })?;
+                let public = secret.public_key();
+                let public_bytes = public.to_sec1_bytes();
+                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
+                (public_handle, secret_handle)
+            },
+            NAMED_CURVE_P521 => {
+                let mut rand = vec![0; 66];
+                self.rng.borrow_mut().fill_bytes(&mut rand);
+                let secret_handle = Handle::EllipticCurveSecret(rand.clone());
+                let array = GenericArray::<u8, U66>::from_slice(&rand);
+                let secret = elliptic_curve::SecretKey::<NistP521>::from_bytes(&array)
+                    .map_err(|_| {
+                        println!("Errored in the P521 block");
+                        Error::Operation
+                    })?;
+                let public = secret.public_key();
+                let public_bytes = public.to_sec1_bytes();
+                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
+                (public_handle, secret_handle)
+            },
+            _ => {
+                return Err(Error::NotSupported);
+            },
+        };
+
+        let cx = GlobalScope::get_cx();
+        rooted!(in(*cx) let mut algorithm_object = unsafe { JS_NewObject(*cx, ptr::null()) });
+        assert!(!algorithm_object.is_null());
+
+        let name = DOMString::from(ALG_ECDH);
+
+        EcKeyGenParams::from_name_and_curve(
+            name.clone(),
+            DOMString::from(curve),
+            algorithm_object.handle_mut(),
+            cx,
+        );
+
+        let public_key = CryptoKey::new(
+            &self.global(),
+            KeyType::Public,
+            true,
+            name.clone(),
+            algorithm_object.handle(),
+            vec![],
+            public_handle,
+        );
+
+        let secret_key = CryptoKey::new(
+            &self.global(),
+            KeyType::Private,
+            extractable,
+            name,
+            algorithm_object.handle(),
+            usages,
+            secret_handle,
+        );
+
+        let keypair = CryptoKeyPair {
+            privateKey: Some(secret_key),
+            publicKey: Some(public_key),
+        };
+
+        Ok(keypair)
     }
 
     /// <https://w3c.github.io/webcrypto/#aes-cbc-operations>
@@ -2684,6 +2848,31 @@ impl AesKeyAlgorithm {
     }
 }
 
+impl EcKeyGenParams {
+    #[allow(unsafe_code)]
+    fn from_name_and_curve(
+        name: DOMString,
+        named_curve: DOMString,
+        out: MutableHandleObject,
+        cx: JSContext,
+    ) {
+        let key_algorithm = Self {
+            parent: Algorithm { name },
+            namedCurve: named_curve,
+        };
+
+        unsafe {
+            key_algorithm.to_jsobject(*cx, out);
+        }
+    }
+}
+
+impl SubtleEcdhKeyDeriveParams {
+    fn derive_bits(&self, key: &CryptoKey, length: Option<u32>) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+}
+
 impl SubtleHkdfParams {
     /// <https://w3c.github.io/webcrypto/#hkdf-operations>
     fn derive_bits(&self, key: &CryptoKey, length: Option<u32>) -> Result<Vec<u8>, Error> {
@@ -2868,6 +3057,7 @@ impl ImportKeyAlgorithm {
 impl DeriveBitsAlgorithm {
     fn derive_bits(&self, key: &CryptoKey, length: Option<u32>) -> Result<Vec<u8>, Error> {
         match self {
+            Self::Ecdh(ecdh_params) => ecdh_params.derive_bits(key, length),
             Self::Pbkdf2(pbkdf2_params) => pbkdf2_params.derive_bits(key, length),
             Self::Hkdf(hkdf_params) => hkdf_params.derive_bits(key, length),
         }
@@ -2954,6 +3144,19 @@ impl KeyGenerationAlgorithm {
         match self {
             Self::Aes(params) => subtle.generate_key_aes(usages, params, extractable),
             Self::Hmac(params) => subtle.generate_key_hmac(usages, params, extractable),
+            _ => Err(Error::NotSupported),
+        }
+    }
+
+    fn generate_keypair(
+        &self,
+        subtle: &SubtleCrypto,
+        usages: Vec<KeyUsage>,
+        extractable: bool,
+    ) -> Result<CryptoKeyPair, Error> {
+        match self {
+            Self::Ecdh(params) => subtle.generate_keypair_ecdh(usages, params, extractable),
+            _ => Err(Error::NotSupported),
         }
     }
 }

@@ -29,6 +29,8 @@ pub enum Handle {
     Pbkdf2(Vec<u8>),
     Hkdf(Vec<u8>),
     Hmac(Vec<u8>),
+    EllipticCurveSecret(Vec<u8>),
+    EllipticCurvePublic(Vec<u8>),
 }
 
 /// <https://w3c.github.io/webcrypto/#cryptokey-interface>
@@ -153,6 +155,8 @@ impl Handle {
             Self::Pbkdf2(bytes) => bytes,
             Self::Hkdf(bytes) => bytes,
             Self::Hmac(bytes) => bytes,
+            Self::EllipticCurveSecret(bytes) => bytes,
+            Self::EllipticCurvePublic(bytes) => bytes,
         }
     }
 }
