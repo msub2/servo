@@ -14,6 +14,8 @@ use aes_gcm::{AeadInPlace, AesGcm, KeyInit};
 use aes_kw::{KekAes128, KekAes192, KekAes256};
 use base64::prelude::*;
 use cipher::consts::{U12, U16, U32, U48, U66};
+use der::asn1::{AnyRef, ObjectIdentifier};
+use der::{Encode, Sequence};
 use dom_struct::dom_struct;
 use js::conversions::ConversionResult;
 use js::jsapi::{JSObject, JS_NewObject};
@@ -36,8 +38,7 @@ use crate::dom::bindings::codegen::Bindings::SubtleCryptoBinding::{
     AesCbcParams, AesCtrParams, AesDerivedKeyParams, AesGcmParams, AesKeyAlgorithm,
     AesKeyGenParams, Algorithm, AlgorithmIdentifier, EcKeyAlgorithm, EcKeyGenParams,
     EcKeyImportParams, EcdhKeyDeriveParams, HkdfParams, HmacImportParams, HmacKeyAlgorithm,
-    HmacKeyGenParams, JsonWebKey, KeyAlgorithm, KeyFormat, NamedCurve, Pbkdf2Params,
-    SubtleCryptoMethods,
+    HmacKeyGenParams, JsonWebKey, KeyAlgorithm, KeyFormat, Pbkdf2Params, SubtleCryptoMethods,
 };
 use crate::dom::bindings::codegen::UnionTypes::{
     ArrayBufferViewOrArrayBuffer, ArrayBufferViewOrArrayBufferOrJsonWebKey,
@@ -875,21 +876,36 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
                 }
                 let exported_key = match alg_name.as_str() {
                     ALG_AES_CBC | ALG_AES_CTR | ALG_AES_KW | ALG_AES_GCM => subtle.export_key_aes(format, &key),
+                    ALG_ECDH => subtle.export_key_ecdh(format, &key),
                     _ => Err(Error::NotSupported),
                 };
                 match exported_key {
                     Ok(k) => {
                         match k {
-                            AesExportedKey::Raw(k) => {
+                            ExportedKey::Raw(k) => {
                                 let cx = GlobalScope::get_cx();
                                 rooted!(in(*cx) let mut array_buffer_ptr = ptr::null_mut::<JSObject>());
                                 create_buffer_source::<ArrayBufferU8>(cx, &k, array_buffer_ptr.handle_mut())
                                     .expect("failed to create buffer source for exported key.");
                                 promise.resolve_native(&array_buffer_ptr.get())
                             },
-                            AesExportedKey::Jwk(k) => {
+                            ExportedKey::Jwk(k) => {
                                 promise.resolve_native(&k)
                             },
+                            ExportedKey::Spki(k) => {
+                                let cx = GlobalScope::get_cx();
+                                rooted!(in(*cx) let mut array_buffer_ptr = ptr::null_mut::<JSObject>());
+                                create_buffer_source::<ArrayBufferU8>(cx, &k, array_buffer_ptr.handle_mut())
+                                    .expect("failed to create buffer source for exported key.");
+                                promise.resolve_native(&array_buffer_ptr.get())
+                            },
+                            ExportedKey::Pkcs8(k) => {
+                                let cx = GlobalScope::get_cx();
+                                rooted!(in(*cx) let mut array_buffer_ptr = ptr::null_mut::<JSObject>());
+                                create_buffer_source::<ArrayBufferU8>(cx, &k, array_buffer_ptr.handle_mut())
+                                    .expect("failed to create buffer source for exported key.");
+                                promise.resolve_native(&array_buffer_ptr.get())
+                            }
                         }
                     },
                     Err(e) => promise.reject_error(e),
@@ -958,12 +974,18 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
                 };
 
                 let bytes = match exported_key {
-                    AesExportedKey::Raw(k) => k,
-                    AesExportedKey::Jwk(key) => {
+                    ExportedKey::Spki(k) => k,
+                    ExportedKey::Pkcs8(k) => k,
+                    ExportedKey::Raw(k) => k,
+                    ExportedKey::Jwk(key) => {
                         // The spec states to convert this to an ECMAscript object and stringify it, but since we know
                         // that the output will be a string of JSON we can just construct it manually
                         // TODO: Support more than just a subset of the JWK dict, or find a way to
                         // stringify via SM internals
+                        let Some(kty) = key.kty else {
+                            promise.reject_error(Error::Syntax);
+                            return;
+                        };
                         let Some(k) = key.k else {
                             promise.reject_error(Error::Syntax);
                             return;
@@ -2128,10 +2150,7 @@ impl SubtleCrypto {
                 let secret_handle = Handle::EllipticCurveSecret(rand.clone());
                 let array = GenericArray::<u8, U32>::from_slice(&rand);
                 let secret = elliptic_curve::SecretKey::<NistP256>::from_bytes(&array)
-                    .map_err(|_| {
-                        println!("Errored in the P256 block");
-                        Error::Operation
-                    })?;
+                    .map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
                 let public_bytes = public.to_sec1_bytes();
                 let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
@@ -2143,10 +2162,7 @@ impl SubtleCrypto {
                 let secret_handle = Handle::EllipticCurveSecret(rand.clone());
                 let array = GenericArray::<u8, U48>::from_slice(&rand);
                 let secret = elliptic_curve::SecretKey::<NistP384>::from_bytes(&array)
-                    .map_err(|_| {
-                        println!("Errored in the P384 block");
-                        Error::Operation
-                    })?;
+                    .map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
                 let public_bytes = public.to_sec1_bytes();
                 let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
@@ -2154,14 +2170,12 @@ impl SubtleCrypto {
             },
             NAMED_CURVE_P521 => {
                 let mut rand = vec![0; 66];
-                self.rng.borrow_mut().fill_bytes(&mut rand);
+                rand[0] = 0b00000000;
+                self.rng.borrow_mut().fill_bytes(&mut rand[1..65]);
                 let secret_handle = Handle::EllipticCurveSecret(rand.clone());
                 let array = GenericArray::<u8, U66>::from_slice(&rand);
                 let secret = elliptic_curve::SecretKey::<NistP521>::from_bytes(&array)
-                    .map_err(|_| {
-                        println!("Errored in the P521 block");
-                        Error::Operation
-                    })?;
+                    .map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
                 let public_bytes = public.to_sec1_bytes();
                 let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec());
@@ -2211,6 +2225,109 @@ impl SubtleCrypto {
         };
 
         Ok(keypair)
+    }
+
+    /// <https://w3c.github.io/webcrypto/#ecdh-operations>
+    fn export_key_ecdh(&self, format: KeyFormat, key: &CryptoKey) -> Result<ExportedKey, Error> {
+        match format {
+            KeyFormat::Raw => {
+                if key.Type() != KeyType::Public {
+                    return Err(Error::InvalidAccess);
+                }
+                match key.handle() {
+                    Handle::EllipticCurvePublic(key_data) => {
+                        Ok(ExportedKey::Raw(key_data.as_slice().to_vec()))
+                    },
+                    _ => Err(Error::Data),
+                }
+            },
+            KeyFormat::Jwk => {
+                // TODO: NEED TO FIGURE OUT HOW TO GET X AND Y COORDS FROM JUST KEY DATA
+                let d = match key.handle() {
+                    Handle::EllipticCurveSecret(key_data) => Some(DOMString::from(
+                        base64::engine::general_purpose::STANDARD_NO_PAD.encode(key_data),
+                    )),
+                    Handle::EllipticCurvePublic(_) => None,
+                    _ => return Err(Error::Data),
+                };
+                let key_ops = key
+                    .usages()
+                    .iter()
+                    .map(|usage| DOMString::from(usage.as_str()))
+                    .collect::<Vec<DOMString>>();
+                let jwk = JsonWebKey {
+                    alg: None,
+                    crv: None,
+                    d,
+                    dp: None,
+                    dq: None,
+                    e: None,
+                    ext: Some(key.Extractable()),
+                    k: None,
+                    key_ops: Some(key_ops),
+                    kty: Some(DOMString::from("EC")),
+                    n: None,
+                    oth: None,
+                    p: None,
+                    q: None,
+                    qi: None,
+                    use_: None,
+                    x: Some(DOMString::from("TODO")),
+                    y: Some(DOMString::from("TODO")),
+                };
+                Ok(ExportedKey::Jwk(Box::new(jwk)))
+            },
+            KeyFormat::Spki => {
+                if key.Type() != KeyType::Public {
+                    return Err(Error::InvalidAccess);
+                }
+                // let parsed_key = match key.handle() {
+                //     Handle::EllipticCurvePublic(key_data) => {
+                //         let key = elliptic_curve::PublicKey::from_sec1_bytes(key_data.as_slice()).map_err(|_| Error::Data)?;
+                //         key
+                //     },
+                //     _ => return Err(Error::Data),
+                // };
+                let cx = GlobalScope::get_cx();
+                rooted!(in(*cx) let mut algorithm_slot = ObjectValue(key.Algorithm(cx).as_ptr()));
+                let params = value_from_js_object!(EcKeyAlgorithm, cx, algorithm_slot);
+                // Defined in https://www.rfc-editor.org/rfc/rfc5480#section-2.1.1
+                // id-ecPublicKey
+                let algorithm =
+                    ObjectIdentifier::new("1.2.840.10045.2.1").map_err(|_| Error::Operation)?;
+                // Defined in https://www.rfc-editor.org/rfc/rfc5480#section-2.1.1.1
+                let curve_oid = match params.namedCurve.to_ascii_uppercase().as_str() {
+                    // secp256r1
+                    NAMED_CURVE_P256 => ObjectIdentifier::new("1.2.840.10045.3.1.7")
+                        .map_err(|_| Error::Operation)?,
+                    // secp384r1
+                    NAMED_CURVE_P384 => {
+                        ObjectIdentifier::new("1.3.132.0.34").map_err(|_| Error::Operation)?
+                    },
+                    // secp521r1
+                    NAMED_CURVE_P521 => {
+                        ObjectIdentifier::new("1.3.132.0.35").map_err(|_| Error::Operation)?
+                    },
+                    _ => return Err(Error::NotSupported),
+                };
+                let der_encoded_params = curve_oid.to_der().map_err(|_| Error::Data)?;
+                let parameters: Option<AnyRef> = Some(
+                    der_encoded_params
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| Error::Data)?,
+                );
+                let algorithm_identifier = SpkiAlgorithmIdentifier {
+                    algorithm,
+                    parameters,
+                };
+                let der_encoded_algorithm_identifier =
+                    algorithm_identifier.to_der().map_err(|_| Error::Data)?;
+                // TODO: This isn't complete yet, need to have a struct with data too
+                Ok(ExportedKey::Spki(der_encoded_algorithm_identifier))
+            },
+            KeyFormat::Pkcs8 => Ok(ExportedKey::Pkcs8(vec![])),
+        }
     }
 
     /// <https://w3c.github.io/webcrypto/#aes-cbc-operations>
@@ -2428,12 +2545,12 @@ impl SubtleCrypto {
 
     /// <https://w3c.github.io/webcrypto/#aes-cbc-operations>
     /// <https://w3c.github.io/webcrypto/#aes-ctr-operations>
-    fn export_key_aes(&self, format: KeyFormat, key: &CryptoKey) -> Result<AesExportedKey, Error> {
+    fn export_key_aes(&self, format: KeyFormat, key: &CryptoKey) -> Result<ExportedKey, Error> {
         match format {
             KeyFormat::Raw => match key.handle() {
-                Handle::Aes128(key_data) => Ok(AesExportedKey::Raw(key_data.as_slice().to_vec())),
-                Handle::Aes192(key_data) => Ok(AesExportedKey::Raw(key_data.as_slice().to_vec())),
-                Handle::Aes256(key_data) => Ok(AesExportedKey::Raw(key_data.as_slice().to_vec())),
+                Handle::Aes128(key_data) => Ok(ExportedKey::Raw(key_data.as_slice().to_vec())),
+                Handle::Aes192(key_data) => Ok(ExportedKey::Raw(key_data.as_slice().to_vec())),
+                Handle::Aes256(key_data) => Ok(ExportedKey::Raw(key_data.as_slice().to_vec())),
                 _ => Err(Error::Data),
             },
             KeyFormat::Jwk => {
@@ -2474,7 +2591,7 @@ impl SubtleCrypto {
                     x: None,
                     y: None,
                 };
-                Ok(AesExportedKey::Jwk(Box::new(jwk)))
+                Ok(ExportedKey::Jwk(Box::new(jwk)))
             },
             _ => Err(Error::NotSupported),
         }
@@ -2780,9 +2897,11 @@ impl SubtleCrypto {
     }
 }
 
-pub enum AesExportedKey {
+pub enum ExportedKey {
     Raw(Vec<u8>),
     Jwk(Box<JsonWebKey>),
+    Spki(Vec<u8>),
+    Pkcs8(Vec<u8>),
 }
 
 fn data_to_jwk_params(alg: &str, size: &str, key: &[u8]) -> (DOMString, DOMString) {
@@ -3368,3 +3487,37 @@ fn usage_from_str(op: &str) -> Result<KeyUsage, Error> {
     };
     Ok(usage)
 }
+
+pub struct SpkiAlgorithmIdentifier<'a> {
+    /// This field contains an ASN.1 `OBJECT IDENTIFIER`, a.k.a. OID.
+    pub algorithm: ObjectIdentifier,
+
+    /// This field is `OPTIONAL` and contains the ASN.1 `ANY` type, which
+    /// in this example allows arbitrary algorithm-defined parameters.
+    pub parameters: Option<AnyRef<'a>>,
+}
+
+impl<'a> ::der::EncodeValue for SpkiAlgorithmIdentifier<'a> {
+    fn value_len(&self) -> ::der::Result<::der::Length> {
+        self.algorithm.encoded_len()? + self.parameters.encoded_len()?
+    }
+
+    fn encode_value(&self, writer: &mut impl ::der::Writer) -> ::der::Result<()> {
+        self.algorithm.encode(writer)?;
+        self.parameters.encode(writer)?;
+        Ok(())
+    }
+}
+
+impl<'a> ::der::DecodeValue<'a> for SpkiAlgorithmIdentifier<'a> {
+    fn decode_value<R: der::Reader<'a>>(reader: &mut R, _header: der::Header) -> der::Result<Self> {
+        let algorithm = reader.decode()?;
+        let parameters = reader.decode()?;
+        Ok(Self {
+            algorithm,
+            parameters,
+        })
+    }
+}
+
+impl<'a> Sequence<'a> for SpkiAlgorithmIdentifier<'a> {}

@@ -54,6 +54,7 @@ cssparser = { workspace = true }
 ctr = { workspace = true }
 data-url = { workspace = true }
 deny_public_fields = { path = "../deny_public_fields" }
+der = { workspace = true }
 devtools_traits = { workspace = true }
 dom_struct = { path = "../dom_struct" }
 domobject_derive = { path = "../domobject_derive" }
@@ -113,6 +114,7 @@ servo_rand = { path = "../rand" }
 servo_url = { path = "../url" }
 smallvec = { workspace = true, features = ["union"] }
 style_malloc_size_of = { workspace = true }
+spki = { workspace = true }
 glow = { workspace = true }
 style = { workspace = true }
 style_dom = { workspace = true }
