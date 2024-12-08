@@ -94,11 +94,13 @@ parking_lot = { workspace = true }
 percent-encoding = { workspace = true }
 phf = "0.11"
 pixels = { path = "../pixels" }
+pkcs8 = { workspace = true }
 profile_traits = { workspace = true }
 range = { path = "../range" }
 ref_filter_map = "1.0.1"
 regex = { workspace = true }
 ring = { workspace = true }
+sec1 = { workspace = true }
 script_layout_interface = { workspace = true }
 script_traits = { workspace = true }
 selectors = { workspace = true }

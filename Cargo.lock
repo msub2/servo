@@ -1832,6 +1832,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
+ "base64ct",
  "crypto-bigint",
  "digest",
  "ff",
@@ -1842,6 +1843,8 @@ dependencies = [
  "pkcs8",
  "rand_core",
  "sec1",
+ "serde_json",
+ "serdect",
  "subtle",
  "zeroize",
 ]
@@ -6273,6 +6276,7 @@ dependencies = [
  "phf_codegen",
  "phf_shared 0.11.2",
  "pixels",
+ "pkcs8",
  "profile_traits",
  "range",
  "ref_filter_map",
@@ -6280,6 +6284,7 @@ dependencies = [
  "ring",
  "script_layout_interface",
  "script_traits",
+ "sec1",
  "selectors",
  "serde",
  "serde_json",
@@ -6428,6 +6433,7 @@ dependencies = [
  "der",
  "generic-array",
  "pkcs8",
+ "serdect",
  "subtle",
  "zeroize",
 ]
@@ -6526,6 +6532,16 @@ dependencies = [
  "form_urlencoded",
  "itoa",
  "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serdect"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a84f14a19e9a014bb9f4512488d9829a68e04ecabffb0f9904cd1ace94598177"
+dependencies = [
+ "base16ct",
  "serde",
 ]
 
