@@ -20,8 +20,7 @@ use crate::js::conversions::ToJSValConvertible;
 use crate::script_runtime::{CanGc, JSContext};
 
 /// The underlying cryptographic data this key represents
-#[allow(dead_code)]
-#[derive(MallocSizeOf)]
+#[derive(Clone, MallocSizeOf)]
 pub enum Handle {
     Aes128(Vec<u8>),
     Aes192(Vec<u8>),
@@ -29,8 +28,8 @@ pub enum Handle {
     Pbkdf2(Vec<u8>),
     Hkdf(Vec<u8>),
     Hmac(Vec<u8>),
-    EllipticCurveSecret(Vec<u8>),
-    EllipticCurvePublic(Vec<u8>),
+    EllipticCurveSecret(Vec<u8>, String),
+    EllipticCurvePublic(Vec<u8>, String),
 }
 
 /// <https://w3c.github.io/webcrypto/#cryptokey-interface>
@@ -155,8 +154,21 @@ impl Handle {
             Self::Pbkdf2(bytes) => bytes,
             Self::Hkdf(bytes) => bytes,
             Self::Hmac(bytes) => bytes,
-            Self::EllipticCurveSecret(bytes) => bytes,
-            Self::EllipticCurvePublic(bytes) => bytes,
+            Self::EllipticCurveSecret(bytes, _) => bytes,
+            Self::EllipticCurvePublic(bytes, _) => bytes,
+        }
+    }
+
+    pub fn named_curve(&self) -> Option<String> {
+        match self {
+            Self::Aes128(_) => None,
+            Self::Aes192(_) => None,
+            Self::Aes256(_) => None,
+            Self::Pbkdf2(_) => None,
+            Self::Hkdf(_) => None,
+            Self::Hmac(_) => None,
+            Self::EllipticCurveSecret(_, curve) => Some(curve.to_owned()),
+            Self::EllipticCurvePublic(_, curve) => Some(curve.to_owned()),
         }
     }
 }
