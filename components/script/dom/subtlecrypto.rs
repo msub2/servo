@@ -12,7 +12,7 @@ use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
 use aes::{Aes128, Aes192, Aes256};
 use aes_gcm::{AeadInPlace, AesGcm, KeyInit};
 use aes_kw::{KekAes128, KekAes192, KekAes256};
-use base64::prelude::*;
+use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use cipher::consts::{U12, U16, U32, U48, U66};
 use der::asn1::{AnyRef, BitString, ObjectIdentifier};
 use der::{Decode, Encode, Sequence};
@@ -51,7 +51,7 @@ use crate::dom::bindings::import::module::SafeJSContext;
 use crate::dom::bindings::inheritance::Castable;
 use crate::dom::bindings::refcounted::{Trusted, TrustedPromise};
 use crate::dom::bindings::reflector::{reflect_dom_object, DomObject, Reflector};
-use crate::dom::bindings::root::{Dom, DomRoot};
+use crate::dom::bindings::root::DomRoot;
 use crate::dom::bindings::str::DOMString;
 use crate::dom::bindings::trace::RootedTraceableBox;
 use crate::dom::cryptokey::{CryptoKey, Handle};
@@ -648,14 +648,14 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
             Err(e) => {
                 promise.reject_error(e);
                 return promise;
-            }
+            },
         };
-        let derived_bits = match normalized_algorithm.derive_bits(base_key, Some(length)){
+        let derived_bits = match normalized_algorithm.derive_bits(base_key, Some(length)) {
             Ok(secret) => secret,
             Err(e) => {
                 promise.reject_error(e);
                 return promise;
-            }
+            },
         };
 
         let _ = task_source.queue_with_canceller(
@@ -830,8 +830,7 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
                             return promise;
                         };
 
-                        match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(k.as_bytes())
-                        {
+                        match BASE64_URL_SAFE_NO_PAD.decode(k.as_bytes()) {
                             Ok(data) => data,
                             Err(_) => {
                                 promise.reject_error(Error::Syntax);
@@ -864,9 +863,7 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
                                 promise.reject_error(Error::Syntax);
                                 return promise;
                             }
-                            match base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .decode(d.as_bytes())
-                            {
+                            match BASE64_URL_SAFE_NO_PAD.decode(d.as_bytes()) {
                                 Ok(data) => data,
                                 Err(_) => {
                                     promise.reject_error(Error::Syntax);
@@ -1109,12 +1106,12 @@ impl SubtleCryptoMethods<crate::DomTypeHolder> for SubtleCrypto {
                         };
                         let key_ops_str = key_ops.iter().map(|op| op.to_string()).collect::<Vec<String>>();
                         format!("{{
-                            \"kty\": \"oct\",
+                            \"kty\": \"{}\",
                             \"k\": \"{}\",
                             \"alg\": \"{}\",
                             \"ext\": {},
                             \"key_ops\": {:?}
-                        }}", k, alg, ext, key_ops_str)
+                        }}", kty, k, alg, ext, key_ops_str)
                         .into_bytes()
                     },
                 };
@@ -1279,6 +1276,7 @@ impl From<DOMString> for SubtleAlgorithm {
 
 #[derive(Clone, Debug)]
 pub struct SubtleEcKeyGenParams {
+    #[allow(dead_code)]
     pub name: String,
     pub named_curve: String,
 }
@@ -1294,6 +1292,7 @@ impl From<EcKeyGenParams> for SubtleEcKeyGenParams {
 
 #[derive(Clone)]
 pub struct SubtleEcdhKeyDeriveParams {
+    #[allow(dead_code)]
     pub name: String,
     pub public_key_type: KeyType,
     pub public_key_alg: String,
@@ -1315,6 +1314,7 @@ impl SubtleEcdhKeyDeriveParams {
 
 #[derive(Clone, Debug)]
 pub struct SubtleEcKeyImportParams {
+    #[allow(dead_code)]
     pub name: String,
     pub named_curve: String,
 }
@@ -2293,48 +2293,47 @@ impl SubtleCrypto {
         }
 
         let curve = key_gen_params.named_curve.as_str();
-        let (public_handle, secret_handle) = match curve {
+        let (public_bytes, secret_handle) = match curve {
             NAMED_CURVE_P256 | NAMED_CURVE_P384 | NAMED_CURVE_P521 if usages.is_empty() => {
                 return Err(Error::Syntax);
             },
             NAMED_CURVE_P256 => {
                 let mut rand = vec![0; 32];
                 self.rng.borrow_mut().fill_bytes(&mut rand);
-                let secret_handle = Handle::EllipticCurveSecret(rand.clone(), key_gen_params.named_curve.clone());
                 let array = GenericArray::<u8, U32>::from_slice(&rand);
                 let secret = EcSecretP256::from_bytes(array).map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
-                let public_bytes = public.to_sec1_bytes();
-                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec(), key_gen_params.named_curve.clone());
-                (public_handle, secret_handle)
+                let public_bytes = public.to_sec1_bytes().to_vec();
+                let secret_handle = Handle::EllipticCurveSecret(rand, curve.to_string());
+                (public_bytes, secret_handle)
             },
             NAMED_CURVE_P384 => {
                 let mut rand = vec![0; 48];
                 self.rng.borrow_mut().fill_bytes(&mut rand);
-                let secret_handle = Handle::EllipticCurveSecret(rand.clone(), key_gen_params.named_curve.clone());
                 let array = GenericArray::<u8, U48>::from_slice(&rand);
                 let secret = EcSecretP384::from_bytes(array).map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
-                let public_bytes = public.to_sec1_bytes();
-                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec(), key_gen_params.named_curve.clone());
-                (public_handle, secret_handle)
+                let public_bytes = public.to_sec1_bytes().to_vec();
+                let secret_handle = Handle::EllipticCurveSecret(rand, curve.to_string());
+                (public_bytes, secret_handle)
             },
             NAMED_CURVE_P521 => {
                 let mut rand = vec![0; 66];
                 rand[0] = 0b00000000;
                 self.rng.borrow_mut().fill_bytes(&mut rand[1..65]);
-                let secret_handle = Handle::EllipticCurveSecret(rand.clone(), key_gen_params.named_curve.clone());
                 let array = GenericArray::<u8, U66>::from_slice(&rand);
                 let secret = EcSecretP521::from_bytes(array).map_err(|_| Error::Operation)?;
                 let public = secret.public_key();
-                let public_bytes = public.to_sec1_bytes();
-                let public_handle = Handle::EllipticCurvePublic((*public_bytes).to_vec(), key_gen_params.named_curve.clone());
-                (public_handle, secret_handle)
+                let public_bytes = public.to_sec1_bytes().to_vec();
+                let secret_handle = Handle::EllipticCurveSecret(rand, curve.to_string());
+                (public_bytes, secret_handle)
             },
             _ => {
                 return Err(Error::NotSupported);
             },
         };
+        let public_handle =
+            Handle::EllipticCurvePublic(public_bytes, key_gen_params.named_curve.clone());
 
         let cx = GlobalScope::get_cx();
         rooted!(in(*cx) let mut algorithm_object = unsafe { JS_NewObject(*cx, ptr::null()) });
@@ -2522,7 +2521,10 @@ impl SubtleCrypto {
                 if named_curve != params.named_curve.as_str() {
                     return Err(Error::Data);
                 }
-                let handle = Handle::EllipticCurveSecret(pkcs8.private_key.to_vec(), params.named_curve.clone());
+                let handle = Handle::EllipticCurveSecret(
+                    pkcs8.private_key.to_vec(),
+                    params.named_curve.clone(),
+                );
 
                 let name = DOMString::from(ALG_ECDH);
 
@@ -2584,10 +2586,12 @@ impl SubtleCrypto {
                             return Err(Error::Data);
                         },
                     }
-                    let handle = Handle::EllipticCurvePublic(data.to_vec(), params.named_curve.clone());
+                    let handle =
+                        Handle::EllipticCurvePublic(data.to_vec(), params.named_curve.clone());
                     (KeyType::Public, handle)
                 } else {
-                    let handle = Handle::EllipticCurveSecret(data.to_vec(), params.named_curve.clone());
+                    let handle =
+                        Handle::EllipticCurveSecret(data.to_vec(), params.named_curve.clone());
                     (KeyType::Private, handle)
                 };
 
@@ -2620,101 +2624,103 @@ impl SubtleCrypto {
             },
             KeyFormat::Jwk => {
                 let (x, y, crv) = match key.handle() {
-                    Handle::EllipticCurveSecret(key_data, named_curve) => match named_curve.as_str() {
-                        NAMED_CURVE_P256 => {
-                            let key = EcSecretP256::from_bytes(GenericArray::from_slice(
-                                key_data.as_slice(),
-                            ))
-                            .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP256>()
+                    Handle::EllipticCurveSecret(key_data, named_curve) => {
+                        match named_curve.as_str() {
+                            NAMED_CURVE_P256 => {
+                                let key = EcSecretP256::from_bytes(GenericArray::from_slice(
+                                    key_data.as_slice(),
+                                ))
                                 .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        NAMED_CURVE_P384 => {
-                            let key = EcSecretP384::from_bytes(GenericArray::from_slice(
-                                key_data.as_slice(),
-                            ))
-                            .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP384>()
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP256>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            NAMED_CURVE_P384 => {
+                                let key = EcSecretP384::from_bytes(GenericArray::from_slice(
+                                    key_data.as_slice(),
+                                ))
                                 .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        NAMED_CURVE_P521 => {
-                            let key = EcSecretP521::from_bytes(GenericArray::from_slice(
-                                key_data.as_slice(),
-                            ))
-                            .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP521>()
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP384>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            NAMED_CURVE_P521 => {
+                                let key = EcSecretP521::from_bytes(GenericArray::from_slice(
+                                    key_data.as_slice(),
+                                ))
                                 .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        _ => return Err(Error::Data),
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP521>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            _ => return Err(Error::Data),
+                        }
                     },
-                    Handle::EllipticCurvePublic(key_data, named_curve) => match named_curve.as_str() {
-                        NAMED_CURVE_P256 => {
-                            let key = EcPublicP256::from_sec1_bytes(key_data.as_slice())
-                                .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP256>()
-                                .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        NAMED_CURVE_P384 => {
-                            let key = EcPublicP384::from_sec1_bytes(key_data.as_slice())
-                                .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP384>()
-                                .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        NAMED_CURVE_P521 => {
-                            let key = EcPublicP521::from_sec1_bytes(key_data.as_slice())
-                                .map_err(|_| Error::Data)?;
-                            let jwk = key.to_jwk();
-                            let points = jwk
-                                .to_encoded_point::<NistP521>()
-                                .map_err(|_| Error::Data)?;
-                            let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
-                            let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
-                            let crv = jwk.crv().to_string();
-                            (x, y, crv)
-                        },
-                        _ => return Err(Error::Data),
+                    Handle::EllipticCurvePublic(key_data, named_curve) => {
+                        match named_curve.as_str() {
+                            NAMED_CURVE_P256 => {
+                                let key = EcPublicP256::from_sec1_bytes(key_data.as_slice())
+                                    .map_err(|_| Error::Data)?;
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP256>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            NAMED_CURVE_P384 => {
+                                let key = EcPublicP384::from_sec1_bytes(key_data.as_slice())
+                                    .map_err(|_| Error::Data)?;
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP384>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            NAMED_CURVE_P521 => {
+                                let key = EcPublicP521::from_sec1_bytes(key_data.as_slice())
+                                    .map_err(|_| Error::Data)?;
+                                let jwk = key.to_jwk();
+                                let points = jwk
+                                    .to_encoded_point::<NistP521>()
+                                    .map_err(|_| Error::Data)?;
+                                let x = points.x().ok_or(Error::Data)?.as_slice().to_vec();
+                                let y = points.y().ok_or(Error::Data)?.as_slice().to_vec();
+                                let crv = jwk.crv().to_string();
+                                (x, y, crv)
+                            },
+                            _ => return Err(Error::Data),
+                        }
                     },
                     _ => return Err(Error::Data),
                 };
 
-                let x_string =
-                    DOMString::from(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(x));
-                let y_string =
-                    DOMString::from(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(y));
+                let x_string = DOMString::from(BASE64_URL_SAFE_NO_PAD.encode(x));
+                let y_string = DOMString::from(BASE64_URL_SAFE_NO_PAD.encode(y));
                 let d = match key.handle() {
-                    Handle::EllipticCurveSecret(key_data, _) => Some(DOMString::from(
-                        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_data),
-                    )),
+                    Handle::EllipticCurveSecret(key_data, _) => {
+                        Some(DOMString::from(BASE64_URL_SAFE_NO_PAD.encode(key_data)))
+                    },
                     Handle::EllipticCurvePublic(_, _) => None,
                     _ => return Err(Error::Data),
                 };
@@ -2752,33 +2758,26 @@ impl SubtleCrypto {
                 let Handle::EllipticCurvePublic(key_data, named_curve) = key.handle() else {
                     return Err(Error::Data);
                 };
-                match named_curve.as_str() {
+                let spki = match named_curve.as_str() {
                     NAMED_CURVE_P256 => {
                         let key = EcPublicP256::from_sec1_bytes(key_data.as_slice())
                             .map_err(|_| Error::Data)?;
-                        let spki =
-                            SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?;
-                        let spki_bytes = spki.to_der().map_err(|_| Error::Data)?;
-                        Ok(ExportedKey::Spki(spki_bytes))
+                        SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?
                     },
                     NAMED_CURVE_P384 => {
                         let key = EcPublicP384::from_sec1_bytes(key_data.as_slice())
                             .map_err(|_| Error::Data)?;
-                        let spki =
-                            SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?;
-                        let spki_bytes = spki.to_der().map_err(|_| Error::Data)?;
-                        Ok(ExportedKey::Spki(spki_bytes))
+                        SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?
                     },
                     NAMED_CURVE_P521 => {
                         let key = EcPublicP521::from_sec1_bytes(key_data.as_slice())
                             .map_err(|_| Error::Data)?;
-                        let spki =
-                            SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?;
-                        let spki_bytes = spki.to_der().map_err(|_| Error::Data)?;
-                        Ok(ExportedKey::Spki(spki_bytes))
+                        SubjectPublicKeyInfo::from_key(key).map_err(|_| Error::Data)?
                     },
-                    _ => Err(Error::Data),
-                }
+                    _ => return Err(Error::Data),
+                };
+                let spki_bytes = spki.to_der().map_err(|_| Error::Data)?;
+                Ok(ExportedKey::Spki(spki_bytes))
             },
             KeyFormat::Pkcs8 => {
                 if key.Type() != KeyType::Private {
@@ -3386,7 +3385,7 @@ fn data_to_jwk_params(alg: &str, size: &str, key: &[u8]) -> (DOMString, DOMStrin
         ALG_AES_GCM => DOMString::from(format!("A{}GCM", size)),
         _ => unreachable!(),
     };
-    let data = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key);
+    let data = BASE64_URL_SAFE_NO_PAD.encode(key);
     (jwk_alg, DOMString::from(data))
 }
 
@@ -3487,18 +3486,21 @@ impl SubtleEcdhKeyDeriveParams {
         }
 
         // Let publicKey be the public member of normalizedAlgorithm.
-
         // If the [[type]] internal slot of publicKey is not "public", then throw an InvalidAccessError.
         if self.public_key_type != KeyType::Public {
             return Err(Error::InvalidAccess);
         }
 
-        // If the name attribute of the [[algorithm]] internal slot of publicKey is not equal to the name property of the [[algorithm]] internal slot of key, then throw an InvalidAccessError.
+        // If the name attribute of the [[algorithm]] internal slot of publicKey
+        // is not equal to the name property of the [[algorithm]] internal slot of key,
+        // then throw an InvalidAccessError.
         if self.public_key_alg != key.algorithm() {
             return Err(Error::InvalidAccess);
         }
 
-        // If the namedCurve attribute of the [[algorithm]] internal slot of publicKey is not equal to the namedCurve property of the [[algorithm]] internal slot of key, then throw an InvalidAccessError.
+        // If the namedCurve attribute of the [[algorithm]] internal slot of publicKey
+        // is not equal to the namedCurve property of the [[algorithm]] internal slot of key,
+        // then throw an InvalidAccessError.
         let private_handle = key.handle();
         let public_handle = &self.public_key_handle;
         let private_curve = private_handle.named_curve().ok_or(Error::Data)?;
@@ -3508,22 +3510,24 @@ impl SubtleEcdhKeyDeriveParams {
         }
 
         // If the namedCurve property of the [[algorithm]] internal slot of key is "P-256", "P-384" or "P-521":
-        // Perform the ECDH primitive specified in [RFC6090] Section 4 with key as the EC private key d and the EC public key represented by the [[handle]] internal slot of publicKey as the EC public key.
-        // Let secret be the result of applying the field element to octet string conversion defined in Section 6.2 of [RFC6090] to the output of the ECDH primitive.
+        // Perform the ECDH primitive specified in [RFC6090] Section 4 with key as the EC private key d
+        // and the EC public key represented by the [[handle]] internal slot of publicKey as the EC public key.
+        // Let secret be the result of applying the field element to octet string conversion defined in Section 6.2
+        // of [RFC6090] to the output of the ECDH primitive.
         // If performing the operation results in an error, then throw a OperationError.
         let private_bytes = private_handle.as_bytes();
         let public_bytes = public_handle.as_bytes();
         match private_curve.as_str() {
             NAMED_CURVE_P256 => {
-                let private = EcSecretP256::from_sec1_der(private_bytes)
-                    .map_err(|_| Error::Data)?;
+                let private =
+                    EcSecretP256::from_sec1_der(private_bytes).map_err(|_| Error::Data)?;
                 let public =
                     EcPublicP256::from_sec1_bytes(public_bytes).map_err(|_| Error::Data)?;
                 let secret = elliptic_curve::ecdh::diffie_hellman(
                     private.to_nonzero_scalar(),
                     public.as_affine(),
                 );
-                let secret_bytes = secret.raw_secret_bytes().to_vec();
+                let secret_bytes = secret.raw_secret_bytes();
                 match length {
                     Some(len) => {
                         // If the length of secret in bits is less than length, throw an OperationError.
@@ -3531,25 +3535,23 @@ impl SubtleEcdhKeyDeriveParams {
                         if secret_bytes.len() * 8 < len as usize {
                             Err(Error::Operation)
                         } else {
-                            let offset = if len % 8 > 0 { 1 } else { 0 };
-                            Ok(secret_bytes[0..(len as usize / 8)+offset].to_vec())
+                            let end = (len as usize).div_ceil(8);
+                            Ok(secret_bytes[0..end].to_vec())
                         }
                     },
-                    None => {
-                        Ok(secret_bytes)
-                    }
+                    None => Ok(secret_bytes.to_vec()),
                 }
             },
             NAMED_CURVE_P384 => {
-                let private = EcSecretP384::from_sec1_der(private_bytes)
-                    .map_err(|_| Error::Data)?;
+                let private =
+                    EcSecretP384::from_sec1_der(private_bytes).map_err(|_| Error::Data)?;
                 let public =
                     EcPublicP384::from_sec1_bytes(public_bytes).map_err(|_| Error::Data)?;
                 let secret = elliptic_curve::ecdh::diffie_hellman(
                     private.to_nonzero_scalar(),
                     public.as_affine(),
                 );
-                let secret_bytes = secret.raw_secret_bytes().to_vec();
+                let secret_bytes = secret.raw_secret_bytes();
                 match length {
                     Some(len) => {
                         // If the length of secret in bits is less than length, throw an OperationError.
@@ -3557,25 +3559,23 @@ impl SubtleEcdhKeyDeriveParams {
                         if secret_bytes.len() * 8 < len as usize {
                             Err(Error::Operation)
                         } else {
-                            let offset = if len % 8 > 0 { 1 } else { 0 };
-                            Ok(secret_bytes[0..(len as usize / 8)+offset].to_vec())
+                            let end = (len as usize).div_ceil(8);
+                            Ok(secret_bytes[0..end].to_vec())
                         }
                     },
-                    None => {
-                        Ok(secret_bytes)
-                    }
+                    None => Ok(secret_bytes.to_vec()),
                 }
             },
             NAMED_CURVE_P521 => {
-                let private = EcSecretP521::from_sec1_der(private_bytes)
-                    .map_err(|_| Error::Data)?;
+                let private =
+                    EcSecretP521::from_sec1_der(private_bytes).map_err(|_| Error::Data)?;
                 let public =
                     EcPublicP521::from_sec1_bytes(public_bytes).map_err(|_| Error::Data)?;
                 let secret = elliptic_curve::ecdh::diffie_hellman(
                     private.to_nonzero_scalar(),
                     public.as_affine(),
                 );
-                let secret_bytes = secret.raw_secret_bytes().to_vec();
+                let secret_bytes = secret.raw_secret_bytes();
                 match length {
                     Some(len) => {
                         // If the length of secret in bits is less than length, throw an OperationError.
@@ -3583,13 +3583,11 @@ impl SubtleEcdhKeyDeriveParams {
                         if secret_bytes.len() * 8 < len as usize {
                             Err(Error::Operation)
                         } else {
-                            let offset = if len % 8 > 0 { 1 } else { 0 };
-                            Ok(secret_bytes[0..(len as usize / 8)+offset].to_vec())
+                            let end = (len as usize).div_ceil(8);
+                            Ok(secret_bytes[0..end].to_vec())
                         }
                     },
-                    None => {
-                        Ok(secret_bytes)
-                    }
+                    None => Ok(secret_bytes.to_vec()),
                 }
             },
             _ => Err(Error::NotSupported),
@@ -3992,7 +3990,7 @@ fn parse_jwk(
             let k = get_jwk_string(&obj, "k")?;
             let alg = get_jwk_string(&obj, "alg")?;
 
-            let data = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            let data = BASE64_URL_SAFE_NO_PAD
                 .decode(k.as_bytes())
                 .map_err(|_| Error::Data)?;
 
@@ -4048,7 +4046,7 @@ fn parse_jwk(
                 }
             }
 
-            base64::engine::general_purpose::URL_SAFE_NO_PAD
+            BASE64_URL_SAFE_NO_PAD
                 .decode(k.as_bytes())
                 .map_err(|_| Error::Data)
         },
