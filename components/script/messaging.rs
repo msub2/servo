@@ -113,6 +113,7 @@ impl MixedMessage {
                 ScriptThreadMessage::SetAccessibilityActive(..) => None,
                 ScriptThreadMessage::ForwardAccessibilityAction(id, _) => Some(*id),
                 ScriptThreadMessage::TriggerGarbageCollection => None,
+                ScriptThreadMessage::MIDIMessage(id, _) => Some(*id),
             },
             MixedMessage::FromScript(inner_msg) => match inner_msg {
                 MainThreadScriptMsg::Common(CommonScriptMsg::Task(_, _, pipeline_id, _)) => {

@@ -58,6 +58,8 @@ use style_traits::{CSSPixel, SpeculativePainter};
 use stylo_atoms::Atom;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::WebGPUMsg;
+#[cfg(feature = "webmidi")]
+use webmidi_traits::MIDIMsg;
 use webrender_api::ImageKey;
 use webrender_api::units::DevicePixel;
 
@@ -339,6 +341,9 @@ pub enum ScriptThreadMessage {
     ForwardAccessibilityAction(PipelineId, ActionRequest),
     /// Force a garbage collection in this script thread.
     TriggerGarbageCollection,
+    #[cfg(feature = "webmidi")]
+    /// New MIDI data has been received
+    MIDIMessage(PipelineId, MIDIMsg),
 }
 
 impl fmt::Debug for ScriptThreadMessage {
