@@ -49,7 +49,7 @@ use servo_canvas_traits::webgl::{
 use surfman::chains::{PreserveBuffer, SwapChains, SwapChainsAPI};
 use surfman::{
     self, Context, ContextAttributeFlags, ContextAttributes, Device, GLVersion, SurfaceAccess,
-    SurfaceInfo, SurfaceType,
+    SurfaceInfo,
 };
 use webrender_api::units::DeviceIntSize;
 use webrender_api::{
@@ -76,6 +76,7 @@ pub type WebGLContextBusyMap = Arc<RwLock<HashMap<WebGLContextId, usize>>>;
 pub(crate) struct GLContextData {
     pub(crate) ctx: Context,
     pub(crate) gl: Rc<glow::Context>,
+    pub(crate) painter_id: PainterId,
     device: Rc<Device>,
     state: GLState,
     attributes: GLContextAttributes,
@@ -231,7 +232,7 @@ pub(crate) struct WebGLThread {
     /// Channel used to generate/update or delete `ImageKey`s.
     paint_api: CrossProcessPaintApi,
     /// Map of live WebGLContexts.
-    contexts: FxHashMap<WebGLContextId, GLContextData>,
+    pub(crate) contexts: FxHashMap<WebGLContextId, GLContextData>,
     /// Cached information for WebGLContexts.
     cached_context_info: FxHashMap<WebGLContextId, WebGLContextInfo>,
     /// Current bound context.
@@ -244,7 +245,7 @@ pub(crate) struct WebGLThread {
     /// The receiver that should be used to send WebGL messages for processing.
     sender: GenericSender<WebGLMsg>,
     /// The swap chains used by webrender
-    webrender_swap_chains: SwapChains<WebGLContextId, Device>,
+    webrender_swap_chains: SwapChains<WebGLContextId>,
     /// The per-painter details of the underlying surfman connection.
     painter_surfman_details_map: PainterSurfmanDetailsMap,
     /// A usage map used to delay the deletion of WebGL contexts until all WebRender
@@ -262,7 +263,7 @@ pub(crate) struct WebGLThreadInit {
     pub external_image_id_manager: WebRenderExternalImageIdManager,
     pub sender: GenericSender<WebGLMsg>,
     pub receiver: GenericReceiver<WebGLMsg>,
-    pub webrender_swap_chains: SwapChains<WebGLContextId, Device>,
+    pub webrender_swap_chains: SwapChains<WebGLContextId>,
     pub painter_surfman_details_map: PainterSurfmanDetailsMap,
     pub busy_webgl_context_map: WebGLContextBusyMap,
     #[cfg(feature = "webxr")]
@@ -529,7 +530,7 @@ impl WebGLThread {
     }
 
     /// Creates a new WebGLContext
-    fn create_webgl_context(
+    pub(crate) fn create_webgl_context(
         &mut self,
         painter_id: PainterId,
         webgl_version: WebGLVersion,
@@ -583,16 +584,13 @@ impl WebGLThread {
             requested_size.width.min(SAFE_VIEWPORT_DIMS[0]).max(1),
             requested_size.height.min(SAFE_VIEWPORT_DIMS[1]).max(1),
         );
-        let surface_type = SurfaceType::Generic {
-            size: safe_size.to_i32(),
-        };
         let surface_access = self.surface_access();
 
         let mut ctx = device
             .create_context(&context_descriptor, None)
             .map_err(|err| format!("Failed to create the GL context: {:?}", err))?;
         let surface = device
-            .create_surface(&ctx, surface_access, surface_type)
+            .create_offscreen_surface(&ctx, surface_access, safe_size.to_i32())
             .map_err(|err| format!("Failed to create the initial surface: {:?}", err))?;
         device
             .bind_surface_to_context(&mut ctx, surface)
@@ -609,7 +607,7 @@ impl WebGLThread {
         );
 
         self.webrender_swap_chains
-            .create_attached_swap_chain(context_id, &*device, &mut ctx, surface_access)
+            .create_attached_swap_chain(context_id, &device, &mut ctx, surface_access)
             .map_err(|err| format!("Failed to create swap chain: {:?}", err))?;
 
         let Some(swap_chain) = self.webrender_swap_chains.get(context_id) else {
@@ -694,6 +692,7 @@ impl WebGLThread {
             GLContextData {
                 ctx,
                 device,
+                painter_id,
                 gl,
                 state,
                 attributes,

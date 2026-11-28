@@ -69,6 +69,11 @@ impl GlClearer {
                         0,
                     );
 
+                    let status = gl.check_framebuffer_status(gl::FRAMEBUFFER);
+                    if status != gl::FRAMEBUFFER_COMPLETE {
+                        log::error!("WebXR GL FBO error: Framebuffer status not complete!");
+                    }
+
                     // Necessary if using an OpenXR runtime that does not support mutable FOV,
                     // as flipping the projection matrix necessitates reversing the winding order.
                     if should_reverse_winding {

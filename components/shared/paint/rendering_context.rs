@@ -12,7 +12,7 @@ use std::sync::Arc;
 use dpi::PhysicalSize;
 use embedder_traits::RefreshDriver;
 use euclid::default::{Rect, Size2D as UntypedSize2D};
-use euclid::{Point2D, Size2D};
+use euclid::{Point2D, Size2D, UnknownUnit};
 use gleam::gl::{self, Gl};
 use glow::{HasContext, NativeFramebuffer};
 use image::RgbaImage;
@@ -21,8 +21,9 @@ use raw_window_handle::{DisplayHandle, WindowHandle};
 pub use surfman::Error;
 use surfman::chains::{PreserveBuffer, SwapChain};
 use surfman::{
-    Adapter, Connection, Context, ContextAttributeFlags, ContextAttributes, Device, GLApi,
-    GLVersion, NativeWidget, Surface, SurfaceAccess, SurfaceInfo, SurfaceTexture, SurfaceType,
+    Adapter, AdapterPreferences, Connection, Context, ContextAttributeFlags, ContextAttributes,
+    Device, GLApi, GLVersion, OffscreenSurface, RenderingPreference, Surface, SurfaceAccess,
+    SurfaceInfo, SurfaceTexture, WindowSurface,
 };
 use webrender_api::units::{DeviceIntRect, DevicePixel};
 
@@ -72,7 +73,7 @@ pub trait RenderingContext {
         None
     }
     /// Destroys the texture and returns the surface. Default to `None`.
-    fn destroy_texture(&self, _surface_texture: SurfaceTexture) -> Option<Surface> {
+    fn destroy_texture(&self, _surface_texture: SurfaceTexture) -> Option<OffscreenSurface> {
         None
     }
     /// The connection to the display server for WebGL. Default to `None`.
@@ -102,6 +103,7 @@ struct SurfmanRenderingContext {
     gleam_gl: Rc<dyn Gl>,
     glow_gl: Arc<glow::Context>,
     device: RefCell<Device>,
+    connection: RefCell<Connection>,
     context: RefCell<Context>,
     refresh_driver: Option<Rc<dyn RefreshDriver>>,
 }
@@ -169,15 +171,29 @@ impl SurfmanRenderingContext {
             gleam_gl,
             glow_gl: Arc::new(glow_gl),
             device: RefCell::new(device),
+            connection: RefCell::new(connection.clone()),
             context: RefCell::new(context),
             refresh_driver,
         })
     }
 
-    fn create_surface(&self, surface_type: SurfaceType<NativeWidget>) -> Result<Surface, Error> {
+    fn create_offscreen_surface(
+        &self,
+        size: Size2D<i32, UnknownUnit>,
+    ) -> Result<OffscreenSurface, Error> {
         let device = &mut self.device.borrow_mut();
         let context = &self.context.borrow();
-        device.create_surface(context, SurfaceAccess::GPUOnly, surface_type)
+        device.create_offscreen_surface(context, SurfaceAccess::GPUOnly, size)
+    }
+
+    fn create_window_surface(
+        &self,
+        window_handle: WindowHandle<'_>,
+        size: Size2D<i32, UnknownUnit>,
+    ) -> Result<WindowSurface, Error> {
+        let device = &mut self.device.borrow_mut();
+        let context = &self.context.borrow();
+        device.create_window_surface(context, SurfaceAccess::GPUOnly, window_handle, size)
     }
 
     fn bind_surface(&self, surface: Surface) -> Result<(), Error> {
@@ -185,14 +201,21 @@ impl SurfmanRenderingContext {
         let context = &mut self.context.borrow_mut();
         device
             .bind_surface_to_context(context, surface)
-            .map_err(|(err, mut surface)| {
-                let _ = device.destroy_surface(context, &mut surface);
+            .map_err(|(err, surface)| {
+                let _ = match surface {
+                    Surface::Offscreen(mut offscreen_surface) => {
+                        device.destroy_offscreen_surface(context, &mut offscreen_surface)
+                    },
+                    Surface::Window(mut window_surface) => {
+                        device.destroy_window_surface(context, &mut window_surface)
+                    },
+                };
                 err
             })?;
         Ok(())
     }
 
-    fn create_attached_swap_chain(&self) -> Result<SwapChain<Device>, Error> {
+    fn create_attached_swap_chain(&self) -> Result<SwapChain, Error> {
         let device = &mut self.device.borrow_mut();
         let context = &mut self.context.borrow_mut();
         SwapChain::create_attached(device, context, SurfaceAccess::GPUOnly)
@@ -256,8 +279,11 @@ impl SurfmanRenderingContext {
             id: front_buffer_id,
             size,
             ..
-        } = device.surface_info(&surface);
+        } = surface.info();
         debug!("... getting texture for surface {:?}", front_buffer_id);
+        let Surface::Offscreen(surface) = surface else {
+            todo!();
+        };
         let surface_texture = device.create_surface_texture(context, surface).unwrap();
         let gl_texture = device
             .surface_texture_object(&surface_texture)
@@ -266,7 +292,7 @@ impl SurfmanRenderingContext {
         Some((surface_texture, gl_texture, size))
     }
 
-    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<Surface> {
+    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<OffscreenSurface> {
         let device = &self.device.borrow();
         let context = &mut self.context.borrow_mut();
         device
@@ -276,7 +302,7 @@ impl SurfmanRenderingContext {
     }
 
     fn connection(&self) -> Option<Connection> {
-        Some(self.device.borrow().connection())
+        Some(self.connection.borrow().clone())
     }
 
     fn refresh_driver(&self) -> Option<Rc<dyn RefreshDriver>> {
@@ -296,7 +322,7 @@ impl SurfmanRenderingContext {
 pub struct SoftwareRenderingContext {
     size: Cell<PhysicalSize<u32>>,
     surfman_rendering_info: SurfmanRenderingContext,
-    swap_chain: SwapChain<Device>,
+    swap_chain: SwapChain,
 }
 
 impl SoftwareRenderingContext {
@@ -309,13 +335,15 @@ impl SoftwareRenderingContext {
         }
 
         let connection = Connection::new()?;
-        let adapter = connection.create_software_adapter()?;
+        let adapter = connection.create_adapter(AdapterPreferences {
+            power: surfman::PowerPreference::HighPerformance,
+            rendering: RenderingPreference::Hardware,
+        })?;
         let surfman_rendering_info = SurfmanRenderingContext::new(&connection, &adapter, None)?;
 
         let surfman_size = Size2D::new(size.width as i32, size.height as i32);
-        let surface =
-            surfman_rendering_info.create_surface(SurfaceType::Generic { size: surfman_size })?;
-        surfman_rendering_info.bind_surface(surface)?;
+        let surface = surfman_rendering_info.create_offscreen_surface(surfman_size)?;
+        surfman_rendering_info.bind_surface(Surface::Offscreen(surface))?;
         surfman_rendering_info.make_current()?;
 
         let swap_chain = surfman_rendering_info.create_attached_swap_chain()?;
@@ -394,7 +422,7 @@ impl RenderingContext for SoftwareRenderingContext {
         self.surfman_rendering_info.create_texture(surface)
     }
 
-    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<Surface> {
+    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<OffscreenSurface> {
         self.surfman_rendering_info.destroy_texture(surface_texture)
     }
 
@@ -458,18 +486,17 @@ impl WindowRenderingContext {
         }
 
         let connection = Connection::from_display_handle(display_handle)?;
-        let adapter = connection.create_adapter()?;
+        let adapter = connection.create_adapter(AdapterPreferences {
+            power: surfman::PowerPreference::HighPerformance,
+            rendering: RenderingPreference::Hardware,
+        })?;
         let surfman_context = SurfmanRenderingContext::new(&connection, &adapter, refresh_driver)?;
 
-        let native_widget = connection
-            .create_native_widget_from_window_handle(
-                window_handle,
-                Size2D::new(size.width as i32, size.height as i32),
-            )
-            .expect("Failed to create native widget");
-
-        let surface = surfman_context.create_surface(SurfaceType::Widget { native_widget })?;
-        surfman_context.bind_surface(surface)?;
+        let surface = surfman_context.create_window_surface(
+            window_handle,
+            Size2D::new(size.width as i32, size.height as i32),
+        )?;
+        surfman_context.bind_surface(Surface::Window(surface))?;
         surfman_context.make_current()?;
 
         Ok(Self {
@@ -492,8 +519,15 @@ impl WindowRenderingContext {
     pub fn take_window(&self) -> Result<(), Error> {
         let device = self.surfman_context.device.borrow_mut();
         let mut context = self.surfman_context.context.borrow_mut();
-        let mut surface = device.unbind_surface_from_context(&mut context)?.unwrap();
-        device.destroy_surface(&mut context, &mut surface)?;
+        let surface = device.unbind_surface_from_context(&mut context)?.unwrap();
+        match surface {
+            Surface::Offscreen(mut offscreen_surface) => {
+                device.destroy_offscreen_surface(&mut context, &mut offscreen_surface)
+            },
+            Surface::Window(mut window_surface) => {
+                device.destroy_window_surface(&mut context, &mut window_surface)
+            },
+        }?;
         Ok(())
     }
 
@@ -509,22 +543,25 @@ impl WindowRenderingContext {
         let device = self.surfman_context.device.borrow_mut();
         let mut context = self.surfman_context.context.borrow_mut();
 
-        let native_widget = device
-            .connection()
-            .create_native_widget_from_window_handle(
-                window_handle,
-                Size2D::new(size.width as i32, size.height as i32),
-            )
-            .expect("Failed to create native widget");
-
         let surface_access = SurfaceAccess::GPUOnly;
-        let surface_type = SurfaceType::Widget { native_widget };
-        let surface = device.create_surface(&context, surface_access, surface_type)?;
+        let surface = device.create_window_surface(
+            &context,
+            surface_access,
+            window_handle,
+            Size2D::new(size.width as i32, size.height as i32),
+        )?;
 
         device
             .bind_surface_to_context(&mut context, surface)
-            .map_err(|(err, mut surface)| {
-                let _ = device.destroy_surface(&mut context, &mut surface);
+            .map_err(|(err, surface)| {
+                let _ = match surface {
+                    Surface::Offscreen(mut offscreen_surface) => {
+                        device.destroy_offscreen_surface(&mut context, &mut offscreen_surface)
+                    },
+                    Surface::Window(mut window_surface) => {
+                        device.destroy_window_surface(&mut context, &mut window_surface)
+                    },
+                };
                 err
             })?;
         device.make_context_current(&context)?;
@@ -585,7 +622,7 @@ impl RenderingContext for WindowRenderingContext {
         self.surfman_context.create_texture(surface)
     }
 
-    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<Surface> {
+    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<OffscreenSurface> {
         self.surfman_context.destroy_texture(surface_texture)
     }
 
@@ -899,7 +936,7 @@ impl RenderingContext for OffscreenRenderingContext {
         self.parent_context.create_texture(surface)
     }
 
-    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<Surface> {
+    fn destroy_texture(&self, surface_texture: SurfaceTexture) -> Option<OffscreenSurface> {
         self.parent_context.destroy_texture(surface_texture)
     }
 
@@ -979,7 +1016,10 @@ mod test {
     #[expect(unsafe_code)]
     fn test_read_pixels() -> Result<(), Error> {
         let connection = Connection::new()?;
-        let adapter = connection.create_software_adapter()?;
+        let adapter = connection.create_adapter(surfman::AdapterPreferences {
+            power: surfman::PowerPreference::HighPerformance,
+            rendering: surfman::RenderingPreference::Software,
+        })?;
         let device = connection.create_device(&adapter)?;
         let context_descriptor = device.create_context_descriptor(&ContextAttributes {
             version: GLVersion::new(3, 0),

@@ -141,7 +141,7 @@ xcomponent-sys = { workspace = true, features = ["api-20", "keyboard-types"] }
 nix = { workspace = true, features = ["fs"] }
 serde_json = { workspace = true }
 servo-base = { workspace = true }
-surfman = { workspace = true, features = ["sm-angle-default"] }
+surfman = { workspace = true, features = ["sm-angle"] }
 
 [target.'cfg(not(any(target_os = "android", target_env = "ohos")))'.dependencies]
 dirs = { workspace = true }

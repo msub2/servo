@@ -11,14 +11,14 @@ use paint_api::{ExternalImageSource, WebRenderExternalImageApi};
 use rustc_hash::FxHashMap;
 use servo_canvas_traits::webgl::{WebGLContextId, WebGLThreads};
 use surfman::chains::{SwapChainAPI, SwapChains, SwapChainsAPI};
-use surfman::{Device, SurfaceTexture};
+use surfman::SurfaceTexture;
 use webgl::webgl_thread::WebGLContextBusyMap;
 
 /// Bridge between the webrender::ExternalImage callbacks and the WebGLThreads.
 pub struct WebGLExternalImages {
     webgl_threads: WebGLThreads,
     rendering_context: Rc<dyn RenderingContext>,
-    swap_chains: SwapChains<WebGLContextId, Device>,
+    swap_chains: SwapChains<WebGLContextId>,
     busy_webgl_context_map: WebGLContextBusyMap,
     locked_front_buffers: FxHashMap<WebGLContextId, SurfaceTexture>,
 }
@@ -27,7 +27,7 @@ impl WebGLExternalImages {
     pub fn new(
         webgl_threads: WebGLThreads,
         rendering_context: Rc<dyn RenderingContext>,
-        swap_chains: SwapChains<WebGLContextId, Device>,
+        swap_chains: SwapChains<WebGLContextId>,
         busy_webgl_context_map: WebGLContextBusyMap,
     ) -> Self {
         Self {
@@ -48,8 +48,9 @@ impl WebGLExternalImages {
         }
 
         let front_buffer = self.swap_chains.get(id)?.take_surface()?;
-        let (surface_texture, gl_texture, size) =
-            self.rendering_context.create_texture(front_buffer)?;
+        let (surface_texture, gl_texture, size) = self
+            .rendering_context
+            .create_texture(surfman::Surface::Offscreen(front_buffer))?;
         self.locked_front_buffers.insert(id, surface_texture);
 
         Some((gl_texture, size))

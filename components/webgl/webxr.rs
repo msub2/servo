@@ -316,4 +316,9 @@ impl WebXRContexts<WebXRSurfman> for WebGLThread {
         let data = self.make_current_if_needed(context_id.into())?;
         Some(&data.gl)
     }
+
+    fn context_for_painter(&mut self, painter_id: PainterId) -> Option<&Context> {
+        let ctx = self.contexts.values().find(|c| c.painter_id == painter_id);
+        ctx.map(|c| &c.ctx)
+    }
 }

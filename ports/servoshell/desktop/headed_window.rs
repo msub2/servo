@@ -1198,7 +1198,7 @@ impl servo::webxr::GlWindow for XRWindow {
     fn get_render_target(
         &self,
         device: &mut surfman::Device,
-        _context: &mut surfman::Context,
+        context: &mut surfman::Context,
     ) -> servo::webxr::GlWindowRenderTarget {
         self.winit_window.set_visible(true);
         let window_handle = self
@@ -1207,11 +1207,15 @@ impl servo::webxr::GlWindow for XRWindow {
             .expect("could not get window handle from window");
         let size = self.winit_window.inner_size();
         let size = Size2D::new(size.width as i32, size.height as i32);
-        let native_widget = device
-            .connection()
-            .create_native_widget_from_window_handle(window_handle, size)
-            .expect("Failed to create native widget");
-        servo::webxr::GlWindowRenderTarget::NativeWidget(native_widget)
+        let surface = device
+            .create_window_surface(
+                context,
+                surfman::SurfaceAccess::GPUOnly,
+                window_handle,
+                size,
+            )
+            .expect("Failed to create window surface");
+        servo::webxr::GlWindowRenderTarget::WindowSurface(surface)
     }
 
     fn get_rotation(&self) -> Rotation3D<f32, UnknownUnit, UnknownUnit> {

@@ -13,8 +13,8 @@ use profile_traits::generic_callback::GenericCallback as ProfileGenericCallback;
 use raw_window_handle::DisplayHandle;
 use surfman::chains::{PreserveBuffer, SwapChain, SwapChainAPI, SwapChains, SwapChainsAPI};
 use surfman::{
-    Adapter, Connection, Context as SurfmanContext, ContextAttributeFlags, ContextAttributes,
-    Device as SurfmanDevice, GLApi, GLVersion, NativeWidget, SurfaceAccess, SurfaceType,
+    Adapter, AdapterPreferences, Connection, Context as SurfmanContext, ContextAttributeFlags,
+    ContextAttributes, Device as SurfmanDevice, GLApi, GLVersion, WindowSurface,
 };
 use webxr_api::util::ClipPlanes;
 use webxr_api::{
@@ -66,8 +66,8 @@ pub enum GlWindowMode {
 }
 
 pub enum GlWindowRenderTarget {
-    NativeWidget(NativeWidget),
-    SwapChain(SwapChain<SurfmanDevice>),
+    WindowSurface(WindowSurface),
+    SwapChain(SwapChain),
 }
 
 pub struct GlWindowDiscovery {
@@ -80,7 +80,11 @@ pub struct GlWindowDiscovery {
 impl GlWindowDiscovery {
     pub fn new(window: Rc<dyn GlWindow>) -> GlWindowDiscovery {
         let connection = Connection::from_display_handle(window.display_handle()).unwrap();
-        let adapter = connection.create_adapter().unwrap();
+        let adapter_preferences = AdapterPreferences {
+            power: surfman::PowerPreference::HighPerformance,
+            rendering: surfman::RenderingPreference::Hardware,
+        };
+        let adapter = connection.create_adapter(adapter_preferences).unwrap();
         let flags = ContextAttributeFlags::ALPHA |
             ContextAttributeFlags::DEPTH |
             ContextAttributeFlags::STENCIL;
@@ -138,8 +142,8 @@ pub struct GlWindowDevice {
     window: Rc<dyn GlWindow>,
     grand_manager: LayerGrandManager<SurfmanGL>,
     layer_manager: Option<LayerManager>,
-    target_swap_chain: Option<SwapChain<SurfmanDevice>>,
-    swap_chains: SwapChains<LayerId, SurfmanDevice>,
+    target_swap_chain: Option<SwapChain>,
+    swap_chains: SwapChains<LayerId>,
     read_fbo: Option<gl::NativeFramebuffer>,
     events: EventBuffer,
     clip_planes: ClipPlanes,
@@ -247,7 +251,7 @@ impl DeviceAPI for GlWindowDevice {
                 Some(surface) => surface,
                 None => return,
             };
-            let texture_size = self.device.surface_info(&surface).size;
+            let texture_size = surface.info().size;
             let surface_texture = self
                 .device
                 .create_surface_texture(&mut self.context, surface)
@@ -285,16 +289,8 @@ impl DeviceAPI for GlWindowDevice {
             },
             None => {
                 // Rendering to a native widget
-                let mut surface = self
-                    .device
-                    .unbind_surface_from_context(&mut self.context)
-                    .unwrap()
-                    .unwrap();
                 self.device
-                    .present_surface(&self.context, &mut surface)
-                    .unwrap();
-                self.device
-                    .bind_surface_to_context(&mut self.context, surface)
+                    .present_bound_surface(&mut self.context)
                     .unwrap();
             },
         }
@@ -368,13 +364,9 @@ impl GlWindowDevice {
         });
 
         let target_swap_chain = match window.get_render_target(&mut device, &mut context) {
-            GlWindowRenderTarget::NativeWidget(native_widget) => {
-                let surface_type = SurfaceType::Widget { native_widget };
-                let surface = device
-                    .create_surface(&context, SurfaceAccess::GPUOnly, surface_type)
-                    .unwrap();
+            GlWindowRenderTarget::WindowSurface(window_surface) => {
                 device
-                    .bind_surface_to_context(&mut context, surface)
+                    .bind_surface_to_context(&mut context, window_surface)
                     .unwrap();
                 None
             },

@@ -189,7 +189,7 @@ ohos-vsync = "0.1.3"
 ohos-window-manager-sys = "0.1"
 ohos-window-sys = "0.1.7"
 once_cell = "1.21.4"
-openxr = "0.21"
+openxr = { git = "https://github.com/Ralith/openxrs", rev = "18f4872a28f3cbe1604b715b40ef12aef429478a" }
 p256 = { version = "0.14", features = ["ecdh"] }
 p384 = { version = "0.14", features = ["ecdh"] }
 p521 = { version = "0.14", features = ["ecdh"] }
@@ -503,3 +503,4 @@ codegen-units = 1
 #
 # [patch."https://github.com/servo/<repository>"]
 # <crate> = { path = "/path/to/local/checkout" }
+surfman = { path = "../surfman" }

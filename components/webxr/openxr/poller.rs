@@ -103,7 +103,7 @@ impl Drop for OpenXRDevicePoller {
 }
 
 fn openxr_device_check(app_info: &AppInfo) -> Option<(u64, String)> {
-    let entry = unsafe { Entry::load().ok()? };
+    let entry = unsafe { Entry::load(&()).ok()? };
     let app_info = ApplicationInfo {
         application_name: &app_info.application_name,
         application_version: app_info.application_version,
@@ -112,7 +112,7 @@ fn openxr_device_check(app_info: &AppInfo) -> Option<(u64, String)> {
         api_version: OPENXR_VERSION,
     };
     let instance = entry
-        .create_instance(&app_info, &ExtensionSet::default(), &[])
+        .create_instance(&app_info, &ExtensionSet::default(), &[], &())
         .ok()?;
     let system = instance.system(FormFactor::HEAD_MOUNTED_DISPLAY).ok()?;
     let properties = instance.system_properties(system).ok()?;

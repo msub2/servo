@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use euclid::{Size2D, UnknownUnit};
+use glow::Texture;
 use openxr::{ExtensionSet, FrameStream, FrameWaiter, Graphics, Instance, Session, SystemId};
 use surfman::{
     Context as SurfmanContext, Device as SurfmanDevice, Error as SurfmanError, SurfaceTexture,
@@ -18,11 +19,30 @@ pub trait GraphicsProviderMethods<G: Graphics> {
         instance: &Instance,
         system: SystemId,
         device: &SurfmanDevice,
+        context: Option<&SurfmanContext>,
     ) -> Result<(Session<G>, FrameWaiter, FrameStream<G>), Error>;
-    fn surface_texture_from_swapchain_texture(
+    fn swapchain_texture(
         image: <G as Graphics>::SwapchainImage,
         device: &SurfmanDevice,
         context: &mut SurfmanContext,
         size: &Size2D<i32, UnknownUnit>,
-    ) -> Result<SurfaceTexture, SurfmanError>;
+    ) -> Result<SwapchainTexture, SurfmanError>;
+}
+
+#[allow(unused)]
+pub enum SwapchainTexture {
+    Surfman(SurfaceTexture),
+    Gl(Texture),
+}
+
+impl SwapchainTexture {
+    pub fn resolve(&self, device: &SurfmanDevice) -> (Option<Texture>, u32) {
+        match self {
+            SwapchainTexture::Surfman(texture) => (
+                device.surface_texture_object(texture),
+                device.surface_gl_texture_target(),
+            ),
+            SwapchainTexture::Gl(texture) => (Some(*texture), glow::TEXTURE_2D),
+        }
+    }
 }

@@ -14,7 +14,7 @@ name = "paint_api"
 path = "lib.rs"
 
 [features]
-no-wgl = ["surfman/sm-angle-default"]
+no-wgl = ["surfman/sm-angle"]
 tracing = ["dep:tracing"]
 
 [dependencies]

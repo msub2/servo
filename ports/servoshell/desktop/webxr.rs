@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use servo::webxr::{GlWindowDiscovery, WebXrRegistry};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use servo::webxr::{OpenXrAppInfo, OpenXrDiscovery};
 use servo::{Preferences, pref, prefs};
 use winit::event_loop::ActiveEventLoop;
@@ -18,7 +18,7 @@ use crate::window::PlatformWindow;
 #[cfg_attr(target_os = "windows", expect(clippy::large_enum_variant))]
 enum XrDiscovery {
     GlWindow(GlWindowDiscovery),
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     OpenXr(OpenXrDiscovery),
 }
 
@@ -39,12 +39,12 @@ impl XrDiscoveryWebXrRegistry {
         };
 
         let xr_discovery = if preferences.dom_webxr_openxr_enabled {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 let app_info = OpenXrAppInfo::new("Servoshell", 0, "Servo", 0);
                 Some(XrDiscovery::OpenXr(OpenXrDiscovery::new(None, app_info)))
             }
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             None
         } else if preferences.dom_webxr_glwindow_enabled {
             let window = window.new_glwindow(event_loop);
@@ -83,7 +83,7 @@ impl WebXrRegistry for XrDiscoveryWebXrRegistry {
         if let Some(xr_discovery) = self.xr_discovery.take() {
             match xr_discovery {
                 XrDiscovery::GlWindow(discovery) => xr.register(discovery),
-                #[cfg(target_os = "windows")]
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
                 XrDiscovery::OpenXr(discovery) => xr.register(discovery),
             }
         }

@@ -40,8 +40,6 @@ use servo_constellation_traits::EmbedderToConstellationMessage;
 use servo_geometry::DeviceIndependentPixel;
 use style_traits::CSSPixel;
 #[cfg(feature = "webgl")]
-use surfman::Device;
-#[cfg(feature = "webgl")]
 use surfman::chains::SwapChains;
 #[cfg(feature = "webgl")]
 use webgl::WebGLComm;
@@ -82,7 +80,7 @@ pub struct WebGLPaint {
     webgl_join_handle: Cell<Option<JoinHandle<()>>>,
 
     /// The shared [`SwapChains`] used by [`WebGLThreads`] for this renderer.
-    pub(crate) swap_chains: SwapChains<WebGLContextId, Device>,
+    pub(crate) swap_chains: SwapChains<WebGLContextId>,
 }
 
 #[cfg(feature = "webgl")]

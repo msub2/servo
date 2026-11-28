@@ -29,6 +29,7 @@ pub trait GLContexts<GL: GLTypes> {
     fn device_for_painter(&mut self, painter_id: PainterId) -> Option<GL::Device>;
     fn bindings(&mut self, context_id: ContextId) -> Option<&GL::Bindings>;
     fn context(&mut self, context_id: ContextId) -> Option<&mut GL::Context>;
+    fn context_for_painter(&mut self, painter_id: PainterId) -> Option<&GL::Context>;
 }
 
 impl GLTypes for () {
@@ -52,6 +53,10 @@ impl GLContexts<()> for () {
 
     fn bindings(&mut self, _: ContextId) -> Option<&()> {
         Some(self)
+    }
+
+    fn context_for_painter(&mut self, _: PainterId) -> Option<&()> {
+        Some(&())
     }
 }
 

@@ -6460,21 +6460,18 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "openxr"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c2f814a47d257c79c762bc64042859661b6aa2f57cfa1f0ad4d778f419aeb0e"
+version = "0.22.0"
+source = "git+https://github.com/Ralith/openxrs?rev=18f4872a28f3cbe1604b715b40ef12aef429478a#18f4872a28f3cbe1604b715b40ef12aef429478a"
 dependencies = [
  "libc",
  "libloading 0.9.1",
- "ndk-context",
  "openxr-sys",
 ]
 
 [[package]]
 name = "openxr-sys"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b8d66081de28c2fa40216182a37292fe38aeea20bc184612504d5e64daf5359"
+version = "0.14.0"
+source = "git+https://github.com/Ralith/openxrs?rev=18f4872a28f3cbe1604b715b40ef12aef429478a#18f4872a28f3cbe1604b715b40ef12aef429478a"
 dependencies = [
  "libc",
 ]
@@ -10613,8 +10610,6 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surfman"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fe194717def845ecb64e7aeda3e2108c4b3b1584a01aa6e545e702cedca2a00"
 dependencies = [
  "bitflags 2.13.2",
  "cfg_aliases",

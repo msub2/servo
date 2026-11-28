@@ -21,7 +21,7 @@ default = ["x11"]
 angle = ["surfman/sm-angle"]
 glwindow = []
 headless = []
-openxr-api = ["angle", "openxr", "winapi", "wio", "surfman/sm-angle-default"]
+openxr-api = ["angle", "openxr", "winapi", "wio", "surfman/sm-angle"]
 x11 = ["surfman/sm-x11"]
 
 [dependencies]

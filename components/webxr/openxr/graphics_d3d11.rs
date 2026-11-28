@@ -10,9 +10,10 @@ use openxr::d3d::{D3D11, Requirements, SessionCreateInfoD3D11};
 use openxr::{
     ExtensionSet, FormFactor, FrameStream, FrameWaiter, Graphics, Instance, Session, SystemId,
 };
+use surfman::angle::adapter::AngleAdapter;
 use surfman::{
     Adapter as SurfmanAdapter, Context as SurfmanContext, Device as SurfmanDevice,
-    Error as SurfmanError, SurfaceTexture,
+    Error as SurfmanError,
 };
 use webxr_api::Error;
 use winapi::Interface;
@@ -21,7 +22,7 @@ use winapi::shared::{dxgi, dxgiformat};
 use winapi::um::d3d11::ID3D11Texture2D;
 use wio::com::ComPtr;
 
-use crate::openxr::graphics::{GraphicsProvider, GraphicsProviderMethods};
+use crate::openxr::graphics::{GraphicsProvider, GraphicsProviderMethods, SwapchainTexture};
 
 pub type Backend = D3D11;
 
@@ -53,6 +54,7 @@ impl GraphicsProviderMethods<D3D11> for GraphicsProvider {
         instance: &Instance,
         system: SystemId,
         device: &SurfmanDevice,
+        _context: Option<&SurfmanContext>,
     ) -> Result<(Session<D3D11>, FrameWaiter, FrameStream<D3D11>), Error> {
         // FIXME: We should ensure that the OpenXR runtime's texture will be shareable with
         // surfman's surfaces by validating the requirements of the XR runtime and ensuring that
@@ -61,7 +63,12 @@ impl GraphicsProviderMethods<D3D11> for GraphicsProvider {
         // While not used, this runs the Requirements check (OpenXR will throw validation error otherwise)
         // and will exit early if the adapter somehow can't be found.
         let _ = create_surfman_adapter(instance).ok_or(Error::NoMatchingDevice)?;
-        let native_device = device.native_device();
+        let native_device = device
+            .angle()
+            .map_err(|error| {
+                Error::BackendSpecific(format!("Angle device unavailable: {error:?}"))
+            })?
+            .native_device();
         let d3d_device = native_device.d3d11_device;
 
         unsafe {
@@ -76,16 +83,20 @@ impl GraphicsProviderMethods<D3D11> for GraphicsProvider {
         }
     }
 
-    fn surface_texture_from_swapchain_texture(
+    fn swapchain_texture(
         image: <D3D11 as Graphics>::SwapchainImage,
         device: &SurfmanDevice,
         context: &mut SurfmanContext,
         size: &Size2D<i32, UnknownUnit>,
-    ) -> Result<SurfaceTexture, SurfmanError> {
+    ) -> Result<SwapchainTexture, SurfmanError> {
         unsafe {
             let image = ComPtr::from_raw(image as *mut ID3D11Texture2D);
             image.AddRef();
-            device.create_surface_texture_from_texture(context, size, image)
+            Ok(SwapchainTexture::Surfman(
+                device
+                    .angle()?
+                    .create_surface_texture_from_texture(context, size, image)?,
+            ))
         }
     }
 }
@@ -129,5 +140,7 @@ fn create_surfman_adapter(instance: &Instance) -> Option<SurfmanAdapter> {
 
     let requirements = D3D11::requirements(instance, system).ok()?;
     let adapter = get_matching_adapter(&requirements).ok()?;
-    Some(SurfmanAdapter::from_dxgi_adapter(adapter.up()))
+    Some(SurfmanAdapter::Angle(AngleAdapter::from_dxgi_adapter(
+        adapter.up(),
+    )))
 }

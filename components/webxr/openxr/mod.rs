@@ -25,9 +25,7 @@ use openxr::{
 use profile_traits::generic_callback::GenericCallback as ProfileGenericCallback;
 use servo_base::generic_channel::GenericCallback;
 use servo_base::id::PainterId;
-use surfman::{
-    Context as SurfmanContext, Device as SurfmanDevice, Error as SurfmanError, SurfaceTexture,
-};
+use surfman::{Context as SurfmanContext, Device as SurfmanDevice, Error as SurfmanError};
 use webxr_api::util::{self, ClipPlanes};
 use webxr_api::{
     self, BaseSpace, Capture, ContextId, DeviceAPI, DiscoveryAPI, Display, Error, Event,
@@ -44,7 +42,7 @@ mod input;
 use input::OpenXRInput;
 mod graphics;
 mod interaction_profiles;
-use graphics::{GraphicsProvider, GraphicsProviderMethods};
+use graphics::{GraphicsProvider, GraphicsProviderMethods, SwapchainTexture};
 mod poller;
 use poller::OpenXRDevicePoller;
 
@@ -52,6 +50,11 @@ use poller::OpenXRDevicePoller;
 mod graphics_d3d11;
 #[cfg(target_os = "windows")]
 use graphics_d3d11::Backend;
+
+#[cfg(target_os = "linux")]
+mod graphics_egl;
+#[cfg(target_os = "linux")]
+use graphics_egl::Backend;
 
 const OPENXR_VERSION: Version = Version::new(1, 0, 36);
 
@@ -207,7 +210,7 @@ fn create_instance(
     needs_passthrough: bool,
     app_info: &AppInfo,
 ) -> Result<CreatedInstance, String> {
-    let entry = unsafe { Entry::load().map_err(|e| format!("Entry::load {:?}", e))? };
+    let entry = unsafe { Entry::load(&()).map_err(|e| format!("Entry::load {:?}", e))? };
     let supported = entry
         .enumerate_extensions()
         .map_err(|e| format!("Entry::enumerate_extensions {:?}", e))?;
@@ -249,7 +252,7 @@ fn create_instance(
     let supported_interaction_profiles = get_supported_interaction_profiles(&supported, &mut exts);
 
     let instance = entry
-        .create_instance(&app_info, &exts, &[])
+        .create_instance(&app_info, &exts, &[], &())
         .map_err(|e| format!("Entry::create_instance {:?}", e))?;
     let system = instance
         .system(FormFactor::HEAD_MOUNTED_DISPLAY)
@@ -341,20 +344,31 @@ impl DiscoveryAPI<SurfmanGL> for OpenXrDiscovery {
         // We'll make a "default" instance here to check the blend modes,
         // then a proper one in request_session with hands/secondary support if needed.
         let needs_passthrough = mode == SessionMode::ImmersiveAR;
-        if let Ok(instance) = create_instance(false, false, needs_passthrough, &self.app_info) &&
-            let Ok(blend_modes) = instance.instance.enumerate_environment_blend_modes(
-                instance.system,
-                ViewConfigurationType::PRIMARY_STEREO,
-            )
-        {
-            if mode == SessionMode::ImmersiveAR {
-                supports = blend_modes.contains(&EnvironmentBlendMode::ADDITIVE) ||
-                    blend_modes.contains(&EnvironmentBlendMode::ALPHA_BLEND) ||
-                    instance.supports_passthrough;
-            } else if mode == SessionMode::ImmersiveVR {
-                // Immersive VR sessions are not precluded by non-opaque blending
-                supports = !blend_modes.is_empty();
-            }
+        let instance = match create_instance(false, false, needs_passthrough, &self.app_info) {
+            Ok(instance) => instance,
+            Err(e) => {
+                println!("Error creating session: {:?}", e);
+                return false;
+            },
+        };
+        let blend_modes = match instance.instance.enumerate_environment_blend_modes(
+            instance.system,
+            ViewConfigurationType::PRIMARY_STEREO,
+        ) {
+            Ok(blend_modes) => blend_modes,
+            Err(e) => {
+                println!("Error enumerating blend modes: {:?}", e);
+                return false;
+            },
+        };
+
+        if mode == SessionMode::ImmersiveAR {
+            supports = blend_modes.contains(&EnvironmentBlendMode::ADDITIVE) ||
+                blend_modes.contains(&EnvironmentBlendMode::ALPHA_BLEND) ||
+                instance.supports_passthrough;
+        } else if mode == SessionMode::ImmersiveVR {
+            // Immersive VR sessions are not precluded by non-opaque blending
+            supports = !blend_modes.is_empty();
         }
         supports
     }
@@ -432,7 +446,7 @@ struct OpenXrLayer {
     depth_stencil_texture: Option<gl::NativeTexture>,
     size: Size2D<i32, Viewport>,
     images: Vec<<Backend as Graphics>::SwapchainImage>,
-    surface_textures: Vec<Option<SurfaceTexture>>,
+    swapchain_textures: Vec<Option<SwapchainTexture>>,
     waited: bool,
 }
 
@@ -478,25 +492,25 @@ impl OpenXrLayer {
             depth_stencil_texture,
             size,
             images,
-            surface_textures,
+            swapchain_textures: surface_textures,
             waited,
         })
     }
 
-    fn get_surface_texture(
+    fn get_texture(
         &mut self,
         device: &SurfmanDevice,
         context: &mut SurfmanContext,
         index: usize,
-    ) -> Result<&SurfaceTexture, SurfmanError> {
+    ) -> Result<&SwapchainTexture, SurfmanError> {
         let result = self
-            .surface_textures
+            .swapchain_textures
             .get_mut(index)
             .ok_or(SurfmanError::Failed)?;
         if let Some(result) = result {
             return Ok(result);
         }
-        let surface_texture = GraphicsProvider::surface_texture_from_swapchain_texture(
+        let surface_texture = GraphicsProvider::swapchain_texture(
             self.images[index],
             device,
             context,
@@ -594,14 +608,18 @@ impl LayerManagerAPI<SurfmanGL> for OpenXrLayerManager {
                 .device(context_id)
                 .expect("missing device for context");
             let context = contexts.context(context_id).expect("missing GL context");
-            for surface_texture in std::mem::take(&mut layer.surface_textures)
+            for texture in std::mem::take(&mut layer.swapchain_textures)
                 .into_iter()
                 .flatten()
             {
-                let mut surface = device
-                    .destroy_surface_texture(context, surface_texture)
-                    .unwrap();
-                device.destroy_surface(context, &mut surface).unwrap();
+                if let SwapchainTexture::Surfman(surface_texture) = texture {
+                    let mut surface = device
+                        .destroy_surface_texture(context, surface_texture)
+                        .unwrap();
+                    device
+                        .destroy_offscreen_surface(context, &mut surface)
+                        .unwrap();
+                }
             }
         }
     }
@@ -796,13 +814,11 @@ impl LayerManagerAPI<SurfmanGL> for OpenXrLayerManager {
                     })?;
                 openxr_layer.waited = true;
 
-                let color_surface_texture = openxr_layer
-                    .get_surface_texture(&device, context, image as usize)
-                    .map_err(|e| {
-                        Error::BackendSpecific(format!("Layer::get_surface_texture {:?}", e))
-                    })?;
-                let color_texture = device.surface_texture_object(color_surface_texture);
-                let color_target = device.surface_gl_texture_target();
+                //
+                let (color_texture, color_target) = openxr_layer
+                    .get_texture(&device, context, image as usize)
+                    .map_err(|e| Error::BackendSpecific(format!("Layer::get_texture {:?}", e)))?
+                    .resolve(&device);
                 let depth_stencil_texture = openxr_layer.depth_stencil_texture;
                 let texture_array_index = None;
                 let origin = Point2D::new(0, 0);
@@ -886,8 +902,9 @@ impl OpenXrDevice {
             let device = contexts
                 .device_for_painter(painter_id)
                 .ok_or(Error::NoMatchingDevice)?;
+            let context = contexts.context_for_painter(painter_id);
             let (session, frame_waiter, frame_stream) =
-                GraphicsProvider::create_session(&instance_clone, system, &device)?;
+                GraphicsProvider::create_session(&instance_clone, system, &device, context)?;
             let (passthrough, passthrough_layer) = if supports_passthrough {
                 let flags = PassthroughFlagsFB::IS_RUNNING_AT_CREATION;
                 let purpose = PassthroughLayerPurposeFB::RECONSTRUCTION;

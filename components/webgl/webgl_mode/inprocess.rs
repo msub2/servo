@@ -7,7 +7,6 @@ use std::thread::JoinHandle;
 use log::debug;
 use paint_api::{CrossProcessPaintApi, PainterSurfmanDetailsMap, WebRenderExternalImageIdManager};
 use servo_canvas_traits::webgl::{WebGLContextId, WebGLMsg, WebGLThreads, webgl_channel};
-use surfman::Device;
 use surfman::chains::SwapChains;
 #[cfg(feature = "webxr")]
 use webxr::SurfmanGL as WebXRSurfman;
@@ -18,7 +17,7 @@ use crate::webgl_thread::{WebGLContextBusyMap, WebGLThread, WebGLThreadInit};
 
 pub struct WebGLComm {
     pub webgl_threads: WebGLThreads,
-    pub swap_chains: SwapChains<WebGLContextId, Device>,
+    pub swap_chains: SwapChains<WebGLContextId>,
     pub busy_webgl_context_map: WebGLContextBusyMap,
     #[cfg(feature = "webxr")]
     pub webxr_layer_grand_manager: WebXRLayerGrandManager<WebXRSurfman>,

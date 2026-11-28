@@ -29,7 +29,7 @@ impl GLTypes for SurfmanGL {
 
 pub struct SurfmanLayerManager {
     layers: Vec<(ContextId, LayerId)>,
-    swap_chains: SwapChains<LayerId, SurfmanDevice>,
+    swap_chains: SwapChains<LayerId>,
     surface_textures: HashMap<LayerId, SurfaceTexture>,
     depth_stencil_textures: HashMap<LayerId, Option<gl::NativeTexture>>,
     viewports: Viewports,
@@ -37,10 +37,7 @@ pub struct SurfmanLayerManager {
 }
 
 impl SurfmanLayerManager {
-    pub fn new(
-        viewports: Viewports,
-        swap_chains: SwapChains<LayerId, SurfmanDevice>,
-    ) -> SurfmanLayerManager {
+    pub fn new(viewports: Viewports, swap_chains: SwapChains<LayerId>) -> SurfmanLayerManager {
         let layers = Vec::new();
         let surface_textures = HashMap::new();
         let depth_stencil_textures = HashMap::new();
@@ -124,7 +121,7 @@ impl LayerManagerAPI<SurfmanGL> for SurfmanLayerManager {
         if let Some(surface_texture) = self.surface_textures.remove(&layer_id) &&
             let Ok(mut surface) = device.destroy_surface_texture(context, surface_texture)
         {
-            let _ = device.destroy_surface(context, &mut surface);
+            let _ = device.destroy_offscreen_surface(context, &mut surface);
         }
 
         if let Some(depth_stencil_texture) = self.depth_stencil_textures.remove(&layer_id) {
